@@ -58,5 +58,6 @@ tmp
 temp
 .env*
 
-# Persona tokens written by `bun agents:seed`
+# Persona tokens written by `bun agents:seed` and the headless opencode configs
 agents/*/.mcp.json
+agents/*/opencode.json

@@ -333,6 +333,8 @@ Start the suppliers first, then the buyer (plan.md §5.4). From each directory:
 ${RUN_COMMAND}
 \`\`\`
 
+For a step-by-step runbook covering both OpenCode and Claude Code, see RUNNING.md in this directory.
+
 ${dirs.map((dir) => `- \`${dir}\``).join("\n")}
 `
 );

@@ -8,6 +8,8 @@ Start the suppliers first, then the buyer (plan.md §5.4). From each directory:
 claude -p "Trade now: run the loop in CLAUDE.md until it ends." --model claude-opus-5-5 --effort high --mcp-config .mcp.json --strict-mcp-config --setting-sources local --allowedTools "mcp__market__*" --max-turns 60
 ```
 
+For a step-by-step runbook covering both OpenCode and Claude Code, see RUNNING.md in this directory.
+
 - `agents/supplier-ESP-28030062`
 - `agents/supplier-CZE-26181134`
 - `agents/supplier-CZE-28819446`
