@@ -27,16 +27,18 @@ const citeLabel = (url: string) =>
 export const ThreadView = ({
   thread,
   demand,
+  className,
 }: {
   thread: Thread;
   demand: Demand | undefined;
+  className?: string;
 }) => {
   const buyerName = demand?.buyerName ?? "Buyer";
   const sideName = (side: Side) =>
     side === "buyer" ? buyerName : thread.supplierName;
   return (
-    <Card>
-      <CardHeader>
+    <Card className={className}>
+      <CardHeader className="pr-10">
         <CardTitle className="flex flex-wrap items-center gap-2">
           <span>
             {demand?.titleEn ?? demand?.title ?? "Demand"} ×{" "}

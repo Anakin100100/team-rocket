@@ -7,6 +7,7 @@ export type MarketEvent = Awaited<
 >["events"][number];
 
 export type ThreadState = "open" | "agreed" | "abandoned" | "superseded";
+export type PostingState = "open" | "filled" | "withdrawn";
 export type Side = "buyer" | "supplier";
 
 export interface Demand {
@@ -24,7 +25,7 @@ export interface Demand {
   url: string | null;
   fetchedAt: string | null;
   walkAwayEur: number | null;
-  state: "open" | "filled";
+  state: "open" | "filled" | "withdrawn";
 }
 
 export interface Offer {
@@ -36,7 +37,7 @@ export interface Offer {
   leadTimeDays: number;
   note: string;
   floorEur: number | null;
-  state: "open" | "filled";
+  state: "open" | "filled" | "withdrawn";
 }
 
 export interface Proposal {
@@ -239,6 +240,23 @@ const closeWith =
     thread.updatedAt = event.ts;
   };
 
+// A withdrawn posting's threads close through their own walked_away events.
+const onDemandWithdrawn: Handler = (view, event) => {
+  const demand = event.demand_id
+    ? view.demands.get(event.demand_id)
+    : undefined;
+  if (demand) {
+    demand.state = "withdrawn";
+  }
+};
+
+const onOfferWithdrawn: Handler = (view, event) => {
+  const offer = event.offer_id ? view.offers.get(event.offer_id) : undefined;
+  if (offer) {
+    offer.state = "withdrawn";
+  }
+};
+
 const HANDLERS: Record<string, Handler> = {
   demand_posted: onDemandPosted,
   offer_posted: onOfferPosted,
@@ -247,6 +265,8 @@ const HANDLERS: Record<string, Handler> = {
   agreed: onAgreed,
   walked_away: closeWith("abandoned"),
   superseded: closeWith("superseded"),
+  demand_withdrawn: onDemandWithdrawn,
+  offer_withdrawn: onOfferWithdrawn,
 };
 
 export const buildView = (events: readonly MarketEvent[]): MarketView => {
