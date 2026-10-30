@@ -35,6 +35,12 @@
       }
     },
     {
+      "source": "/.well-known/(.*)",
+      "destination": {
+        "service": "server"
+      }
+    },
+    {
       "source": "/(.*)",
       "destination": {
         "service": "web"

@@ -10,8 +10,11 @@
     "check-types": "tsc -b"
   },
   "dependencies": {
+    "@better-auth/cimd": "1.7.12",
     "@better-auth/core": "1.7.12",
     "@better-auth/drizzle-adapter": "1.7.12",
+    "@better-auth/mcp": "1.7.12",
+    "@better-auth/oauth-provider": "1.7.12",
     "@rocket/db": "workspace:*",
     "better-auth": "catalog:",
     "drizzle-orm": "catalog:",

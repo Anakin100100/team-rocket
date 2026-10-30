@@ -16,6 +16,7 @@ import { cors } from "hono/cors";
 
 import { createContext } from "./context";
 import { ENV } from "./env.server";
+import { handleMcpRequest } from "./mcp";
 import { auth } from "./services";
 
 initLogger({
@@ -50,6 +51,10 @@ app.use(
 );
 
 app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+
+// OAuth discovery for MCP clients (RFC 8414 / RFC 9728), answered by Better Auth.
+app.on(["GET", "HEAD"], "/.well-known/*", (c) => auth.handler(c.req.raw));
+app.all("/api/mcp", (c) => handleMcpRequest(c.req.raw));
 
 export const apiHandler = new OpenAPIHandler(appRouter, {
   plugins: [

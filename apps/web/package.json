@@ -14,6 +14,7 @@
   "dependencies": {
     "@better-auth-ui/core": "^1.7.32",
     "@better-auth-ui/react": "^1.7.32",
+    "@better-auth/oauth-provider": "1.7.12",
     "@orpc/client": "catalog:",
     "@orpc/server": "catalog:",
     "@orpc/tanstack-query": "^1.15.6",

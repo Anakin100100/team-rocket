@@ -1,7 +1,11 @@
+import { cimd } from "@better-auth/cimd";
+import { fetchClientMetadataResource } from "@better-auth/cimd/node";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter/relations-v2";
+import { mcp } from "@better-auth/mcp";
 import type { Database } from "@rocket/db";
 import * as schema from "@rocket/db/schema/auth";
 import { betterAuth } from "better-auth";
+import { jwt } from "better-auth/plugins/jwt";
 import { organization } from "better-auth/plugins/organization";
 import { eq } from "drizzle-orm";
 
@@ -18,6 +22,10 @@ export interface AuthConfig extends EmailConfig {
   BETTER_AUTH_SECRET: string;
   CORS_ORIGIN: string;
 }
+
+// The MCP endpoint on the API server; OAuth access tokens are audience-bound to it.
+export const getMcpResource = (env: Pick<AuthConfig, "BETTER_AUTH_URL">) =>
+  new URL("/api/mcp", env.BETTER_AUTH_URL).href;
 
 export interface AuthOptions {
   desktopOrigins?: readonly string[];
@@ -107,6 +115,21 @@ export const createAuth = (
             })
           );
         },
+      }),
+      // MCP clients sign users in through this app (OAuth 2.1). `mcp()` is the
+      // OAuth provider and needs `jwt()` for signing keys and `/jwks`.
+      jwt(),
+      mcp({
+        // Absolute: the web app and the API run on different origins locally.
+        loginPage: new URL("/auth/sign-in", env.CORS_ORIGIN).href,
+        consentPage: new URL("/oauth/consent", env.CORS_ORIGIN).href,
+        resource: getMcpResource(env),
+      }),
+      // MCP clients identify themselves with a Client ID Metadata Document URL
+      // instead of registering dynamically.
+      cimd({
+        fetchClientMetadataResource,
+        metadataProfile: "mcp-2026-07-28",
       }),
     ],
   });

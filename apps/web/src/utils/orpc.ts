@@ -25,7 +25,7 @@ export const createQueryClient = () =>
 
 export const queryClient = createQueryClient();
 
-const getServerUrl = (url: string) => {
+export const getServerUrl = (url: string) => {
   const processEnv = typeof process === "undefined" ? undefined : process.env;
   if (typeof window === "undefined" && processEnv?.SERVER_URL) {
     return new URL("api", processEnv.SERVER_URL).toString().replace(/\/$/u, "");

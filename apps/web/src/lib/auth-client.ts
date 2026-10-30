@@ -1,3 +1,4 @@
+import { oauthProviderClient } from "@better-auth/oauth-provider/client";
 import { organizationClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 
@@ -35,5 +36,7 @@ const getServerUrl = (url: string) => {
 
 export const authClient = createAuthClient({
   baseURL: `${getServerUrl(ENV.VITE_SERVER_URL)}/auth`,
-  plugins: [organizationClient()],
+  // oauthProviderClient: sign-in on an OAuth login page (e.g. an MCP client
+  // connecting) carries the signed authorization request and resumes it.
+  plugins: [organizationClient(), oauthProviderClient()],
 });
