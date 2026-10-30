@@ -2,7 +2,7 @@
 // An event names the buyer and/or supplier it concerns; a party sees only the
 // events that name it, observers see all of them and their sealed values.
 import { marketEvents } from "@rocket/db/schema/market";
-import { and, asc, eq, gt, ne } from "drizzle-orm";
+import { and, asc, eq, gt, ne, or } from "drizzle-orm";
 
 import type { Actor, Executor } from "./context";
 import { actorLabel } from "./context";
@@ -60,11 +60,17 @@ export const eventsFor = async (
   { since, limit }: { since: number; limit: number }
 ) => {
   const observer = actor.kind === "observer";
+  const entityId = actor.entityId ?? "";
   let addressed;
   if (actor.kind === "buyer") {
-    addressed = eq(marketEvents.buyerId, actor.entityId ?? "");
+    addressed = eq(marketEvents.buyerId, entityId);
   } else if (actor.kind === "supplier") {
-    addressed = eq(marketEvents.supplierId, actor.entityId ?? "");
+    addressed = eq(marketEvents.supplierId, entityId);
+  } else if (actor.kind === "trader") {
+    addressed = or(
+      eq(marketEvents.buyerId, entityId),
+      eq(marketEvents.supplierId, entityId)
+    );
   }
   const rows = await executor
     .select()

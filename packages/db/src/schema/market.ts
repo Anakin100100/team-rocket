@@ -19,6 +19,8 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
+import { user } from "./auth";
+
 // --- Data side (public TED records) -------------------------------------------
 
 export const buyers = pgTable("buyers", {
@@ -137,6 +139,31 @@ export const marketAgents = pgTable(
   (table) => [
     uniqueIndex("market_agents_identity_uidx").on(table.kind, table.entityId),
   ]
+);
+
+// One row per signed-in user who trades (plan.md §5.1). A user buys and sells
+// as one company id, present in both `buyers` and `suppliers`: a public record
+// claimed by its company number (users are trusted), or `user:<user id>`.
+export const marketTraders = pgTable(
+  "market_traders",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => user.id, { onDelete: "cascade" }),
+    // null until the user names a company (set_company)
+    entityId: text("entity_id"),
+    // sealed, set by the user: walk-away = a demand's estimated value × this
+    walkAwayFactor: doublePrecision("walk_away_factor").notNull(),
+    // sealed, set by the user: floor = an offer's ask × this
+    floorFactor: doublePrecision("floor_factor").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [uniqueIndex("market_traders_entity_uidx").on(table.entityId)]
 );
 
 export const demands = pgTable(

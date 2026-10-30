@@ -1,5 +1,6 @@
 // Read tools (plan.md §4.1, §4.6). Public records are open to everyone;
-// sealed limits (walk-away, floors) are only ever selected for observers.
+// sealed limits (walk-away, floors) are only ever selected for observers,
+// except a signed-in user's own limit settings, which they chose.
 import {
   awards,
   buyers,
@@ -28,7 +29,9 @@ import type { SQL } from "drizzle-orm";
 import { MAX_PROPOSALS_PER_SIDE } from "./constants";
 import type { Side } from "./constants";
 import type { Actor, MarketContext } from "./context";
+import { actsAs } from "./context";
 import { notFound } from "./errors";
+import { presentLimits, traderLimits } from "./traders";
 
 const awardColumns = {
   external_id: awards.externalId,
@@ -166,17 +169,16 @@ export const searchSuppliers = async (
   }));
 };
 
+// A trader's id is in both tables, so its history covers both sides.
 export const history = async ({ db }: MarketContext, entityId: string) => {
   const [buyer] = await db
     .select({ id: buyers.id, name: buyers.name })
     .from(buyers)
     .where(eq(buyers.id, entityId));
-  const [supplier] = buyer
-    ? []
-    : await db
-        .select({ id: suppliers.id, name: suppliers.name })
-        .from(suppliers)
-        .where(eq(suppliers.id, entityId));
+  const [supplier] = await db
+    .select({ id: suppliers.id, name: suppliers.name })
+    .from(suppliers)
+    .where(eq(suppliers.id, entityId));
   if (!(buyer || supplier)) {
     throw notFound(`No buyer or supplier with id ${entityId}.`);
   }
@@ -184,12 +186,21 @@ export const history = async ({ db }: MarketContext, entityId: string) => {
     .select(awardColumns)
     .from(awards)
     .where(
-      buyer ? eq(awards.buyerId, entityId) : eq(awards.supplierId, entityId)
+      or(
+        buyer ? eq(awards.buyerId, entityId) : undefined,
+        supplier ? eq(awards.supplierId, entityId) : undefined
+      )
     )
     .orderBy(desc(awards.awardDate));
+  let kind = "supplier";
+  if (buyer && supplier) {
+    kind = "buyer and supplier";
+  } else if (buyer) {
+    kind = "buyer";
+  }
   return {
     entity_id: entityId,
-    kind: buyer ? "buyer" : "supplier",
+    kind,
     name: (buyer ?? supplier)?.name,
     awards: rows,
   };
@@ -330,12 +341,29 @@ const presentOffer = (
   ...(withSealed ? { floor_eur: offer.floorEur } : {}),
 });
 
-// Observers see every row; a party only rows on its own side.
+// Observers see every row; a party only rows on the sides it acts on.
 const scoped = (actor: Actor, side: Side, condition: SQL) => {
   if (actor.kind === "observer") {
     return;
   }
-  return actor.kind === side ? condition : sql`false`;
+  return actsAs(actor, side) ? condition : sql`false`;
+};
+
+// The side the actor holds in a thread; a trader can hold either.
+const sideIn = (
+  actor: Actor,
+  thread: { demand: { buyer_id: string }; offer: { supplier_id: string } }
+): Side | null => {
+  if (actsAs(actor, "buyer") && thread.demand.buyer_id === actor.entityId) {
+    return "buyer";
+  }
+  if (
+    actsAs(actor, "supplier") &&
+    thread.offer.supplier_id === actor.entityId
+  ) {
+    return "supplier";
+  }
+  return null;
 };
 
 export const myMarket = async ({ db }: MarketContext, actor: Actor) => {
@@ -363,24 +391,101 @@ export const myMarket = async ({ db }: MarketContext, actor: Actor) => {
         scoped(actor, "supplier", eq(offers.supplierId, actor.entityId ?? ""))
       )
     );
-  const threads = await threadDetails(
+  const details = await threadDetails(
     db,
     matchRows.map((row) => row.id),
     observer
   );
+  const threads = observer
+    ? details
+    : details.map((thread) => ({ ...thread, you_are: sideIn(actor, thread) }));
   return {
     you: { kind: actor.kind, id: actor.entityId, name: actor.name },
     demands: myDemands.map((demand) => presentDemand(demand, observer)),
     offers: myOffers.map((offer) => presentOffer(offer, observer)),
     threads,
     your_turn_in: threads
-      .filter((thread) => thread.state === "open" && thread.turn === actor.kind)
+      .filter(
+        (thread) =>
+          thread.state === "open" && thread.turn === sideIn(actor, thread)
+      )
       .map((thread) => thread.match_id),
+  };
+};
+
+const listingsOf = (db: MarketContext["db"], buyerId: string) =>
+  db
+    .select(listingColumns)
+    .from(listings)
+    .innerJoin(buyers, eq(buyers.id, listings.buyerId))
+    .where(eq(listings.buyerId, buyerId))
+    .orderBy(asc(listings.deadline));
+
+const awardsAs = (db: MarketContext["db"], side: Side, entityId: string) =>
+  db
+    .select(awardColumns)
+    .from(awards)
+    .where(
+      side === "buyer"
+        ? eq(awards.buyerId, entityId)
+        : eq(awards.supplierId, entityId)
+    )
+    .orderBy(desc(awards.awardDate));
+
+const LIMITS_NOTE =
+  "Sealed: no counterparty ever sees them. As a buyer you never pay more than walk_away_pct of a demand's estimated value; as a seller you never go below floor_pct of your ask. Change them with set_limits.";
+
+// A signed-in user: one company that buys and sells, under limits they set.
+const traderRecord = async (ctx: MarketContext, actor: Actor) => {
+  const { db } = ctx;
+  const limits = await traderLimits(db, actor);
+  const yourLimits = limits
+    ? { ...presentLimits(limits), note: LIMITS_NOTE }
+    : null;
+  if (!actor.entityId) {
+    return {
+      kind: actor.kind,
+      name: actor.name,
+      company: null,
+      your_limits: yourLimits,
+      next_step:
+        "Call set_company with your country and either your VAT or company number (to trade as your public record) or your company's name. Then you can post demands and offers.",
+    };
+  }
+  const [company] = await db
+    .select()
+    .from(suppliers)
+    .where(eq(suppliers.id, actor.entityId));
+  const market = await myMarket(ctx, actor);
+  return {
+    kind: actor.kind,
+    id: actor.entityId,
+    name: company?.name ?? actor.name,
+    country: company?.country,
+    you_can:
+      "Buy (post_demand) and sell (post_offer) as this one company. Each thread says which side you are on (you_are).",
+    your_limits: yourLimits,
+    your_listings: await listingsOf(db, actor.entityId),
+    classes_you_have_won_in: await publicBasis(db, [actor.entityId]),
+    your_award_history: {
+      as_buyer: await awardsAs(db, "buyer", actor.entityId),
+      as_supplier: await awardsAs(db, "supplier", actor.entityId),
+    },
+    open_demands: market.demands.filter((demand) => demand.state === "open"),
+    open_offers: market.offers.filter((offer) => offer.state === "open"),
+    open_threads: market.threads.filter((thread) => thread.state === "open")
+      .length,
+    agreed_threads: market.threads.filter((thread) => thread.state === "agreed")
+      .length,
+    your_turn_in: market.your_turn_in,
   };
 };
 
 export const whoami = async (ctx: MarketContext, actor: Actor) => {
   const { db } = ctx;
+  if (actor.kind === "trader") {
+    return traderRecord(ctx, actor);
+  }
   if (actor.kind === "observer" || !actor.entityId) {
     return {
       kind: actor.kind,
@@ -401,17 +506,8 @@ export const whoami = async (ctx: MarketContext, actor: Actor) => {
     if (!buyer) {
       throw notFound(`Buyer ${actor.entityId} does not exist.`);
     }
-    const yourListings = await db
-      .select(listingColumns)
-      .from(listings)
-      .innerJoin(buyers, eq(buyers.id, listings.buyerId))
-      .where(eq(listings.buyerId, buyer.id))
-      .orderBy(asc(listings.deadline));
-    const yourAwards = await db
-      .select(awardColumns)
-      .from(awards)
-      .where(eq(awards.buyerId, buyer.id))
-      .orderBy(desc(awards.awardDate));
+    const yourListings = await listingsOf(db, buyer.id);
+    const yourAwards = await awardsAs(db, "buyer", buyer.id);
     return {
       kind: "buyer",
       id: buyer.id,
@@ -435,11 +531,7 @@ export const whoami = async (ctx: MarketContext, actor: Actor) => {
   if (!supplier) {
     throw notFound(`Supplier ${actor.entityId} does not exist.`);
   }
-  const yourAwards = await db
-    .select(awardColumns)
-    .from(awards)
-    .where(eq(awards.supplierId, supplier.id))
-    .orderBy(desc(awards.awardDate));
+  const yourAwards = await awardsAs(db, "supplier", supplier.id);
   return {
     kind: "supplier",
     id: supplier.id,

@@ -1,11 +1,19 @@
-// The market's contract (plan.md §4.1): eleven tools, exposed at /api/mcp.
-// Identity comes from the connection and is passed in as `actor`; no tool
-// takes "who am I" as an argument.
+// The market's contract (plan.md §4.1), exposed at /api/mcp. Identity comes
+// from the connection and is passed in as `actor`; no tool takes "who am I"
+// as an argument.
 import { z } from "zod";
 
-import { MAX_CITES, MAX_MATCHES, WAIT_MAX_SECONDS } from "./constants";
+import {
+  MAX_CITES,
+  MAX_FLOOR_PCT,
+  MAX_MATCHES,
+  MAX_WALK_AWAY_PCT,
+  MIN_FLOOR_PCT,
+  MIN_WALK_AWAY_PCT,
+  WAIT_MAX_SECONDS,
+} from "./constants";
 import type { Actor, MarketContext } from "./context";
-import { MarketError } from "./errors";
+import { MarketError, invalidInput } from "./errors";
 import {
   history,
   myMarket,
@@ -13,7 +21,15 @@ import {
   searchSuppliers,
   whoami,
 } from "./read";
-import { accept, postDemand, postOffer, propose, walkAway } from "./trade";
+import {
+  accept,
+  postDemand,
+  postOffer,
+  propose,
+  walkAway,
+  withdraw,
+} from "./trade";
+import { setCompany, setLimits } from "./traders";
 import { wait } from "./wait";
 
 const MAX_SEARCH_LIMIT = 50;
@@ -22,6 +38,15 @@ const MAX_MESSAGE_LENGTH = 1500;
 const MAX_NOTE_LENGTH = 1000;
 const MAX_REASON_LENGTH = 1000;
 const MAX_LEAD_TIME_DAYS = 3650;
+const MAX_TITLE_LENGTH = 300;
+const MAX_COMPANY_NAME_LENGTH = 200;
+const MAX_REGISTRY_LENGTH = 40;
+const OWN_LISTING_FIELDS = [
+  "title",
+  "cpv",
+  "estimated_value_eur",
+  "deadline",
+] as const;
 
 const matchId = z
   .string()
@@ -45,7 +70,8 @@ const leadTimeDays = z
   .max(MAX_LEAD_TIME_DAYS)
   .describe("Delivery time in days from agreement.");
 
-export type ToolAccess = "any" | "buyer" | "supplier" | "party";
+// `trader` tools exist only for signed-in users and are not listed to personas.
+export type ToolAccess = "any" | "buyer" | "supplier" | "party" | "trader";
 
 export interface MarketTool<Input extends z.ZodObject = z.ZodObject> {
   name: string;
@@ -180,11 +206,12 @@ export const marketTools: readonly MarketTool[] = [
     title: "Post demand",
     access: "buyer",
     readOnly: false,
-    description: `Buyer: put one of your open listings on the market, with the need written in English. The market matches it against open offers right away and opens up to ${MAX_MATCHES} private threads, each starting with that supplier's public ask; you are on turn in each.`,
+    description: `Buyer: put one of your open listings on the market (listing_id), or, with no published listing, a demand of your own (title, cpv, estimated_value_eur and deadline). The market matches it against open offers right away and opens up to ${MAX_MATCHES} private threads, each starting with that supplier's public ask; you are on turn in each. A listing is bought once.`,
     input: z.object({
       listing_id: z
         .string()
         .min(1)
+        .optional()
         .describe("One of your listings (see whoami)."),
       need: z
         .string()
@@ -192,18 +219,67 @@ export const marketTools: readonly MarketTool[] = [
         .max(MAX_NOTE_LENGTH)
         .optional()
         .describe(
-          "What you are buying, in English. Defaults to the listing's need."
+          "What you are buying, in English. Defaults to the listing's need, or the title."
         ),
+      title: z
+        .string()
+        .min(3)
+        .max(MAX_TITLE_LENGTH)
+        .optional()
+        .describe("Own demand: a short title, in English."),
+      cpv: z
+        .string()
+        .regex(/^\d{8}$/u)
+        .optional()
+        .describe("Own demand: the 8-digit CPV code, e.g. '35815100'."),
+      estimated_value_eur: z
+        .number()
+        .positive()
+        .optional()
+        .describe(
+          "Own demand: what you expect to pay in EUR. Suppliers see it; your walk-away is a percentage of it (see set_limits)."
+        ),
+      deadline: z.iso
+        .date()
+        .optional()
+        .describe("Own demand: last day to agree a deal, YYYY-MM-DD."),
     }),
-    handler: (ctx, actor, input) =>
-      postDemand(ctx, actor, { listingId: input.listing_id, need: input.need }),
+    handler: (ctx, actor, input) => {
+      const given = OWN_LISTING_FIELDS.filter(
+        (field) => input[field] !== undefined
+      );
+      if (input.listing_id && given.length > 0) {
+        throw invalidInput(
+          `Give either listing_id or ${OWN_LISTING_FIELDS.join(", ")}, not both.`
+        );
+      }
+      if (input.listing_id) {
+        return postDemand(ctx, actor, {
+          listingId: input.listing_id,
+          need: input.need,
+        });
+      }
+      const { title, cpv, estimated_value_eur: value, deadline } = input;
+      if (!(title && cpv && value && deadline)) {
+        const missing = OWN_LISTING_FIELDS.filter(
+          (field) => input[field] === undefined
+        );
+        throw invalidInput(
+          `Give listing_id, or for a demand of your own: ${missing.join(", ")}.`
+        );
+      }
+      return postDemand(ctx, actor, {
+        need: input.need,
+        own: { title, cpv, estimatedValueEur: value, deadline },
+      });
+    },
   }),
   defineTool({
     name: "post_offer",
     title: "Post offer",
     access: "supplier",
     readOnly: false,
-    description: `Supplier: offer what you supply in one CPV class you have won in (see whoami), with your public ask, lead time and a note buyers will read. The market matches it against open demands right away and opens up to ${MAX_MATCHES} private threads. One open offer per class.`,
+    description: `Supplier: offer what you supply in one CPV class, with your public ask, lead time and a note buyers will read. Agent personas offer only in classes they have won in (see whoami); signed-in users in any class, with their floor a percentage of the ask (see set_limits). The market matches it against open demands right away and opens up to ${MAX_MATCHES} private threads. One open offer per class.`,
     input: z.object({
       cpv_class: z
         .string()
@@ -284,6 +360,88 @@ export const marketTools: readonly MarketTool[] = [
     }),
     handler: (ctx, actor, input) =>
       walkAway(ctx, actor, { matchId: input.match_id, reason: input.reason }),
+  }),
+  defineTool({
+    name: "withdraw",
+    title: "Withdraw",
+    access: "party",
+    readOnly: false,
+    description:
+      "Take one of your open demands or offers off the market. Its open threads end, and each counterparty reads your reason.",
+    input: z.object({
+      posting_id: z
+        .string()
+        .min(1)
+        .describe("A demand_id or offer_id of yours (see my_market)."),
+      reason: z.string().min(1).max(MAX_REASON_LENGTH),
+    }),
+    handler: (ctx, actor, input) =>
+      withdraw(ctx, actor, {
+        postingId: input.posting_id,
+        reason: input.reason,
+      }),
+  }),
+  defineTool({
+    name: "set_company",
+    title: "Set company",
+    access: "trader",
+    readOnly: false,
+    description:
+      "Choose the company you trade as; you buy and sell as that one company. Give your VAT or company number to trade as its public record (its public awards become your history), or your company's name to trade under it without one. Switching company needs your open demands and offers withdrawn first.",
+    input: z.object({
+      country: z
+        .string()
+        .regex(/^[A-Za-z]{3}$/u)
+        .transform((value) => value.toUpperCase())
+        .describe("Your company's country, ISO 3166-1 alpha-3, e.g. 'CZE'."),
+      registry_number: z
+        .string()
+        .min(4)
+        .max(MAX_REGISTRY_LENGTH)
+        .optional()
+        .describe(
+          "VAT or national company number, e.g. 'CZ26181134' or 'DE 298856333'."
+        ),
+      name: z
+        .string()
+        .min(2)
+        .max(MAX_COMPANY_NAME_LENGTH)
+        .optional()
+        .describe(
+          "Your company's name; needed when the number finds no public record."
+        ),
+    }),
+    handler: (ctx, actor, input) =>
+      setCompany(ctx, actor, {
+        country: input.country,
+        name: input.name,
+        registryNumber: input.registry_number,
+      }),
+  }),
+  defineTool({
+    name: "set_limits",
+    title: "Set limits",
+    access: "trader",
+    readOnly: false,
+    description:
+      "Set your sealed limits, which no counterparty ever sees and the market enforces on every price you propose or accept. walk_away_pct: as a buyer, the most you will pay, as a percentage of your demand's estimated value (default 110). floor_pct: as a seller, the least you will take, as a percentage of your offer's ask (default 80). They apply to demands and offers you post afterwards.",
+    input: z.object({
+      walk_away_pct: z
+        .number()
+        .min(MIN_WALK_AWAY_PCT)
+        .max(MAX_WALK_AWAY_PCT)
+        .optional(),
+      floor_pct: z.number().min(MIN_FLOOR_PCT).max(MAX_FLOOR_PCT).optional(),
+    }),
+    handler: (ctx, actor, input) => {
+      if (input.walk_away_pct === undefined && input.floor_pct === undefined) {
+        throw invalidInput("Give walk_away_pct, floor_pct or both.");
+      }
+      return setLimits(ctx, actor, {
+        walkAwayPct: input.walk_away_pct,
+        floorPct: input.floor_pct,
+      });
+    },
   }),
 ];
 

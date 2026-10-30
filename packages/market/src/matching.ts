@@ -36,9 +36,15 @@ interface Pair {
 }
 
 // Tier 1: same 3-digit class · 2: same division · 3: both in defence (35).
-// Filters: eligibility, at least one defence award, a defence-directive award
-// when the listing needs one, and a thread floor the buyer could ever reach.
-// One thread per supplier and demand (its closest offer).
+// Filters: never a company with itself, an open listing, eligibility, at least
+// one defence award and a defence-directive award when the listing needs one
+// (signed-in users are trusted and skip both), no earlier thread between the
+// two unless it was only superseded, and a thread floor the buyer could ever
+// reach. One thread per supplier and demand (its closest offer).
+//
+// Thread floor: a user's is the floor they set. A persona's is lifted to
+// THREAD_FLOOR_ANCHOR × the demand's value, but never above its own ask, so a
+// supplier can always stand on its opening price.
 const candidatePairs = async (
   executor: Executor,
   where: SQL
@@ -52,29 +58,36 @@ const candidatePairs = async (
              when left(o.cpv_class, 2) = left(d.cpv, 2) then 2
              else 3 end as tier,
         o.ask_eur, o.lead_time_days, o.note,
-        greatest(o.floor_eur, ${THREAD_FLOOR_ANCHOR} * coalesce(d.estimated_value_eur, 0))
-          as thread_floor_eur,
+        case when t.user_id is not null then o.floor_eur
+             else least(o.ask_eur,
+               greatest(o.floor_eur, ${THREAD_FLOOR_ANCHOR} * coalesce(d.estimated_value_eur, 0)))
+        end as thread_floor_eur,
         d.walk_away_eur
       from demands d
       join listings l on l.id = d.listing_id
       join offers o on o.state = 'open'
       join suppliers s on s.id = o.supplier_id
+      left join market_traders t on t.entity_id = s.id
       where d.state = 'open'
         and ${where}
+        and d.buyer_id <> o.supplier_id
+        and l.deadline >= current_date
         and (o.cpv_class = left(d.cpv, 3)
           or left(o.cpv_class, 2) = left(d.cpv, 2)
           or (left(o.cpv_class, 2) = ${DEFENCE_DIVISION} and left(d.cpv, 2) = ${DEFENCE_DIVISION}))
         and (l.eligibility = 'any'
           or (l.eligibility = 'eu' and s.country = any(${sql.param(EU_EEA_COUNTRIES)}::text[]))
           or (l.eligibility = 'nato' and s.country = any(${sql.param(NATO_COUNTRIES)}::text[])))
-        and exists (
+        and (t.user_id is not null or exists (
           select 1 from supplier_offer_basis b
-          where b.supplier_id = s.id and left(b.cpv_class, 2) = ${DEFENCE_DIVISION})
+          where b.supplier_id = s.id and left(b.cpv_class, 2) = ${DEFENCE_DIVISION}))
         and (not l.defence_directive
+          or t.user_id is not null
           or coalesce((s.stats ->> 'defence_directive_awards')::int, 0) >= 1)
         and not exists (
           select 1 from matches m join offers mo on mo.id = m.offer_id
-          where m.demand_id = d.id and mo.supplier_id = o.supplier_id)
+          where m.demand_id = d.id and mo.supplier_id = o.supplier_id
+            and m.state <> 'superseded')
     ),
     tiered as (
       select p.*,

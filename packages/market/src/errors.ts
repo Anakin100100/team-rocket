@@ -24,3 +24,6 @@ export const notFound = (message: string) =>
 
 export const forbidden = (message: string) =>
   new MarketError("FORBIDDEN", message);
+
+export const invalidInput = (message: string) =>
+  new MarketError("INVALID_INPUT", message);

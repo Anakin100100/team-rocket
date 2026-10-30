@@ -5,7 +5,7 @@ import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
 import { getMcpResource } from "@rocket/auth";
 import { feedback } from "@rocket/db/schema/feedback";
 import { marketAgents } from "@rocket/db/schema/market";
-import { marketTools, runTool } from "@rocket/market";
+import { marketTools, runTool, traderActor } from "@rocket/market";
 import type { Actor } from "@rocket/market";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -79,9 +79,13 @@ const mcpHandler = createMcpHandler(({ authInfo }) => {
   const userId = authInfo?.extra?.userId as string | undefined;
   const server = new McpServer({ name: "market", version: "1.0.0" });
 
-  // The marketplace (plan.md §4.1): eleven tools, acting as the connection's
-  // actor. Guards and visibility are enforced in the tools, not here.
+  // The marketplace (plan.md §4.1), acting as the connection's actor. Guards
+  // and visibility are enforced in the tools, not here; this only keeps the
+  // user-only tools out of a persona's list.
   for (const tool of marketTools) {
+    if (tool.access === "trader" && actor.kind !== "trader") {
+      continue;
+    }
     server.registerTool(
       tool.name,
       {
@@ -104,7 +108,9 @@ const mcpHandler = createMcpHandler(({ authInfo }) => {
   return server;
 });
 
-// A signed-in human (OAuth) watches the market as an observer.
+// A signed-in human (OAuth) trades: one company, buying and selling, under
+// limits they set (plan.md §5.1). Until they name a company (set_company)
+// they can read the market but not post.
 const handleHumanRequest = requireMcpAuth(
   auth,
   async (request, claims) => {
@@ -113,11 +119,7 @@ const handleHumanRequest = requireMcpAuth(
       where: { id: userId },
       columns: { name: true },
     });
-    const actor: Actor = {
-      kind: "observer",
-      entityId: null,
-      name: user?.name ?? "observer",
-    };
+    const actor = await traderActor(db, userId, user?.name ?? "user");
     return mcpHandler.fetch(request, {
       authInfo: {
         token: bearerToken(request),

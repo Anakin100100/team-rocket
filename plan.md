@@ -94,6 +94,7 @@ Market side, written only through tools:
 
 ```
 agents      token_hash, kind (buyer|supplier|observer), entity_id, name
+traders     user_id, entity_id, walk_away_factor (sealed), floor_factor (sealed)
 demands     id, listing_id, buyer_id, cpv, need, estimated_value_eur,
             walk_away_eur (sealed), state (open|filled|withdrawn), created_at
 offers      id, supplier_id, cpv_class, cpv_codes, ask_eur, lead_time_days, note,
@@ -157,13 +158,18 @@ Identity comes from the connection, never from arguments. Every tool receives
 | `history` | any | entity_id | public award rows for a buyer or supplier, with TED URLs |
 | `my_market` | any | | demands, offers, matches and proposals where the actor is a party. Observer sees all |
 | `wait` | any | since (event id), timeout_s ≤ 20 | long poll: events addressed to the actor since the cursor, new cursor |
-| `post_demand` | buyer | listing_id, need? | demand in `open`; walk-away copied from listing; runs matching; events to every matched supplier. Guard: listing open, actor owns it |
-| `post_offer` | supplier | cpv_class, ask_eur, lead_time_days, note | offer in `open`; floor from the supplier's class basis; runs matching; events to every matched buyer. Guards: ask ≥ floor, one open offer per class |
+| `post_demand` | buyer | listing_id, need? — or, with no listing: title, cpv, estimated_value_eur, deadline | demand in `open`; walk-away from 4.3; runs matching; events to every matched supplier. Guards: listing open, actor owns it, listing never bought before, a published value |
+| `post_offer` | supplier | cpv_class, ask_eur, lead_time_days, note | offer in `open`; floor from 4.3; runs matching; events to every matched buyer. Guards: ask ≥ floor, one open offer per class, personas only in classes they have won in |
 | `propose` | party | match_id, price_eur, lead_time_days, message, cites? | new standing proposal, turn flips. Guards in 4.4 |
 | `accept` | party | match_id | signs the other side's standing proposal: match `agreed`, demand `filled`, buyer's other matches `superseded`, offer `filled`. Guard: a standing proposal by the other side exists |
 | `walk_away` | party | match_id, reason | match `abandoned`, reason visible to the other side |
+| `withdraw` | party | posting_id, reason | demand or offer `withdrawn`; its open threads `abandoned`, reason visible to each counterparty |
+| `set_company` | trader | country, registry_number?, name? | the company a signed-in user trades as (5.1). Guard: no open postings when switching |
+| `set_limits` | trader | walk_away_pct?, floor_pct? | a signed-in user's sealed limits (4.3), for postings made afterwards |
 
-Eleven tools. No create_rfq, no score, no counter, no award, no accept_award.
+Fourteen tools; the two trader tools are listed only to signed-in users. No create_rfq, no score, no counter, no award, no accept_award.
+
+Every write takes one market-wide lock first (`packages/market/src/write.ts`), so writes run one at a time: guards cannot race, matching sees every posting and event ids commit in order.
 
 ### 4.2 Matching (pure SQL, runs inside both post tools)
 
@@ -176,9 +182,12 @@ both ways:
 | 2 | same 2 digit division |
 | 3 | any division 35 |
 
-Plus: supplier eligible for the listing (`eu`, `nato`, `any`); supplier has at least
-one award in division 35; if the listing is under the defence directive, the supplier
-has at least one defence directive award. Order by tier, then wins in the matched
+Plus: never a company with itself; the listing's deadline not passed; supplier eligible
+for the listing (`eu`, `nato`, `any`); supplier has at least one award in division 35;
+if the listing is under the defence directive, the supplier has at least one defence
+directive award. Signed-in users are trusted and skip both award checks. No second
+thread between a supplier and a demand, unless the first was only superseded (the
+supplier sold elsewhere and offers again). Order by tier, then wins in the matched
 class. Take 6. Every hit becomes a match row, unless its thread floor exceeds the
 buyer's walk-away (4.3), in which case no thread is opened and nobody is told why.
 
@@ -187,12 +196,17 @@ buyer's walk-away (4.3), in which case no thread is opened and nobody is told wh
 - **Buyer walk-away** = published estimated value × 1.10. Stored on the demand.
 - **Offer floor** = min priced award in that CPV class × size margin (small 0.9,
   medium 0.85, large 0.8). Stored on the offer.
-- **Thread floor** = max(offer floor, 0.6 × demand's published value). Stored on the
-  match. The second term stops a tiny historical lot from giving a supplier a floor
-  of €4k on a €700k demand.
+- **Thread floor** = min(ask, max(offer floor, 0.6 × demand's published value)).
+  Stored on the match. The middle term stops a tiny historical lot from giving a
+  supplier a floor of €4k on a €700k demand; capping at the ask means a supplier can
+  always stand on its opening price.
+- **Signed-in users set their own** (`set_limits`): walk-away = estimated value ×
+  walk_away_pct (default 110%), floor = ask × floor_pct (default 80%), and the
+  thread floor is that floor. They apply to postings made afterwards.
 
 The buyer never learns any floor. The supplier never learns the walk-away. Both only
-ever see "outside your limit" when they overstep their own.
+ever see "outside your limit" when they overstep their own. After a listing's
+deadline only `walk_away` is left.
 
 ### 4.4 Negotiation
 
@@ -224,12 +238,12 @@ match    open --accept--> agreed          open --walk_away--> abandoned
 
 ### 4.6 Visibility
 
-| Sees | Buyer | Supplier | Observer |
-|---|---|---|---|
-| own postings and threads | yes | yes | all |
-| counterparty public profile and awards | yes | yes | yes |
-| other suppliers on the same demand | names and tiers only | nothing, not even a count | all |
-| any sealed limit | no | no | yes (admin UI only) |
+| Sees | Buyer | Supplier | Trader (signed-in user) | Observer |
+|---|---|---|---|---|
+| own postings and threads | yes | yes | yes, both sides | all |
+| counterparty public profile and awards | yes | yes | yes | yes |
+| other suppliers on the same demand | names and tiers only | nothing, not even a count | as buyer or supplier, per thread | all |
+| any sealed limit | no | no | only the limit percentages it set itself | yes (admin UI only) |
 
 ### 4.7 Code vs model
 
@@ -248,10 +262,21 @@ match    open --accept--> agreed          open --walk_away--> abandoned
 ### 5.1 Identity
 
 The MCP route gets a second door in front of `requireMcpAuth`. If the bearer token
-hashes to a row in `agents`, the handler runs with that actor. Otherwise the existing
-OAuth path runs and a signed in human becomes an observer (or a supplier, if their
-user is mapped to one). A table rather than an env map so adding a persona needs no
-redeploy.
+hashes to a row in `agents`, the handler runs with that actor. A table rather than an
+env map so adding a persona needs no redeploy.
+
+Otherwise the OAuth path runs and a signed in human is a **trader**: one company that
+buys and sells, under one id present in both `buyers` and `suppliers`
+(`market_traders` maps user → company). `set_company` picks it, and users are trusted:
+
+- a VAT or company number is normalized like the loader does (bare digits, French
+  SIRET/VAT to SIREN) and claims the public record it names, `<country>:<digits>` for
+  suppliers or the matching `ted-buyer:` id, unless an agent persona or another user
+  holds it. Its awards become the user's history.
+- otherwise a name and country give the user a company of its own, `user:<user id>`.
+
+A trader's side in each thread follows from which end holds its id; `my_market` marks
+it (`you_are`). Observers remain only for the admin UI and scripts.
 
 ### 5.2 Layout, generated from the seed
 

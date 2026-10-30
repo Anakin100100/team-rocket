@@ -25,6 +25,7 @@ export {
   listings,
   marketAgents,
   marketEvents,
+  marketTraders,
   matches,
   offers,
   proposals,
