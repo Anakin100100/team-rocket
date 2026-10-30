@@ -23,6 +23,9 @@ const TOKEN_BYTES = 24;
 const TOP_CLASSES = 2;
 const CAPACITY = 2;
 const MAX_TURNS = 60;
+// Pinned: with --setting-sources local the user's default model is not read.
+const MODEL = "claude-opus-5-5";
+const EFFORT = "high";
 
 interface Award {
   url?: string | null;
@@ -154,7 +157,8 @@ const awardTable = (awards: Award[], counterparty: "buyer" | "supplier") => {
   return [header, ...rows].join("\n");
 };
 
-const LOOP_RULES = `- You trade only through the \`market\` tools. You cannot see anyone else's limits, and nobody can see yours.
+const LOOP_RULES = `- You run unattended: no human reads this session or answers questions. Never ask for confirmation or offer options; decide and act with the tools. Posting, proposing, accepting and walking away are exactly what you are here to do.
+- You trade only through the \`market\` tools. You cannot see anyone else's limits, and nobody can see yours.
 - Each thread is private between one buyer and one supplier. Proposals alternate; you can only concede against your own last proposal (buyers raise, suppliers lower), at most 3 proposals per side. After that only \`accept\` or \`walk_away\` remain.
 - If the market answers "outside your limit", you went past your own sealed limit: move back in a sensible step and try again. Never repeat the same refused call.
 - \`accept\` signs the other side's standing proposal exactly as it is. That is the contract.
@@ -257,7 +261,7 @@ ${LOOP_RULES}
 `;
 };
 
-const RUN_COMMAND = `claude -p "Trade." --mcp-config .mcp.json --strict-mcp-config --setting-sources local --allowedTools "mcp__market__*" --max-turns ${MAX_TURNS}`;
+const RUN_COMMAND = `claude -p "Trade now: run the loop in CLAUDE.md until it ends." --model ${MODEL} --effort ${EFFORT} --mcp-config .mcp.json --strict-mcp-config --setting-sources local --allowedTools "mcp__market__*" --max-turns ${MAX_TURNS}`;
 
 // --- Write --------------------------------------------------------------------------
 
