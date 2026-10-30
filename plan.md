@@ -6,554 +6,410 @@ Build the Arsenal · SalesPatriot Europe Challenge · Warsaw, 30 Oct 2026
 
 Europe is buying a lot of military and security equipment right now. The buying
 happens through public tenders: a ministry, an army unit or NATO's procurement
-agency publishes a notice ("we need 40 pitot probe covers by November",
-"we need ballistic helmets, framework contract, 2 years"), companies read it, send
-offers, and the buyer picks one.
+agency publishes a notice, companies read it, send offers, and the buyer picks one.
 
 Today that process runs on email, PDFs and portals in 24 languages. Three things go
 wrong:
 
-- **Fragmented.** Notices are spread across TED (EU wide), national platforms like
-  e-Zamówienia (Poland), NATO NSPA, the European Defence Agency, and ministries'
-  own sites. Nobody sees the whole market.
+- **Fragmented.** Notices are spread across TED, national platforms, NSPA, EDA and
+  ministries' own sites. Nobody sees the whole market.
 - **Manual.** Finding a supplier, getting a quote, comparing offers and awarding takes
   weeks of human work on both sides.
-- **Missed.** A small Finnish drone shop that already won a drone tender in Helsinki
-  never hears about the Polish one. Capacity sits idle while demand waits.
+- **Missed.** A Czech vest maker that just won in Prague never hears about the Slovak
+  notice next door. Capacity sits idle while demand waits.
 
-**What we build:** a marketplace that does three things.
+**What we build:** a two sided market where every participant is an agent.
 
-1. **Matching.** For any open notice, which real companies could deliver it. For any
-   company, which open notices fit its track record. This is instant, both ways.
-2. **Negotiating.** A buyer agent turns a notice into a request for quotes, supplier
-   agents (each representing a real company with a real history) quote or decline
-   with reasons, the buyer counters each shortlisted supplier individually, they
-   answer, the buyer awards with a justification, the winner accepts. No human in
-   the loop.
-3. **Enforcing.** The market itself is code: who may act when, what a supplier may
-   see, what price it may quote. Agents decide inside those bounds. The server is a
-   referee, never an orchestrator.
+1. **Buyers post demands** from real TED notices. **Suppliers post offers** from
+   their real award history. Both sides are proactive. The missed tender finds the
+   supplier because the supplier is already on the market.
+2. **Code matches them** by CPV the moment either side posts. Nobody waits.
+3. **Matched pairs negotiate** in private threads, each side arguing from public
+   award records, until one accepts the other's standing proposal. That acceptance
+   is the contract. No human in the loop.
+4. **The server is a database with guards.** Who may act, whose turn it is, what
+   price is allowed, who sees what. All judgement is in the agents.
 
-**Why this is credible and not a toy:** both sides come from real public data.
-Demand = real open notices fetched today. Supply = real companies that have
-actually won EU defence contracts, with what they won, where, and for how much.
-No invented companies, no invented tenders.
+**Why this is credible:** demand and supply are both real public data. Real open
+notices, real companies that won EU defence contracts, with what they won and for how
+much. Agents quote those records to each other with URLs.
 
-**How we frame the deal on stage:** a public tender cannot legally be closed by two
-agents today. What we show is the market as it looks when every company runs its own
-agent. We seed those agents from the company's public award history. Say this up
-front, the founder judging us knows procurement.
+**How we frame it on stage:** a public tender cannot legally be closed by two agents
+today. We show the market as it looks when every company runs its own agent, seeded
+from its public award history. Say this up front.
 
 ### What the judges require
 
 | Must have | How we satisfy it |
 |---|---|
-| Live app on the host's computer, no slides | Deployed Vercel URL, live event feed; Claude Desktop connected to the same MCP endpoint |
-| Real public European data | TED, NSPA, EDA, e-Zamówienia, Agencja Uzbrojenia notices; TED award winners; ECB FX rates. Fetch timestamp shown in the UI |
-| Both market sides, one deal closed with no human | Buyer agent and supplier agents close an award through the server; acceptance writes a deal row |
+| Live app on the host's computer, no slides | Admin UI on a deployed URL; agent terminals on the laptop; Claude Desktop on the same MCP endpoint |
+| Real public European data | TED notices and award winners. Fetch timestamp shown. Every number an agent cites links to a TED notice |
+| Both market sides, one deal closed with no human | Buyer and supplier agents agree a price through the server; the agreed match is the deal |
 
-Scoring: usefulness 30, creativity 30, use of data 20, demo quality 20. The
-negotiation round is where creativity is won. It must happen on every run.
+Scoring: usefulness 30, creativity 30, use of data 20, demo quality 20. Creativity is
+won in the thread view: two agents arguing from each other's public history.
 
 ## 2. Data
 
 ### 2.1 What we have (`data_discovery/`)
 
-Staging CSVs live in `data_discovery/data/raw/staging/` (gitignored, regenerated by
-the fetch scripts). The committed common format is `data_discovery/data/processed/
-market.db` (SQLite, TED only). The Neon loader starts from `market.db`.
+Staging CSVs live in `data_discovery/data/raw/staging/` (gitignored). The committed
+common format is `data_discovery/data/processed/market.db` (SQLite, TED only): 701
+open notices, 141 of them with a value and a 35* CPV; 4,369 suppliers with at least
+one 35* award; 35,739 awards with values. Supplier deduplication is done.
 
-| File | Rows | Role |
+### 2.2 The seed (`data_discovery/data/processed/demo_seed.json`)
+
+Built by `scripts/build_demo_seed.py` from `market.db`. This is the only data the
+demo loads. Everything in it is public TED data except `title_en` and `need`.
+
+| Key | Contents | Used for |
 |---|---|---|
-| `ted_notices.csv` | ~47k, 811 open | **Demand.** EU wide notices, CPV, deadlines, estimated values in EUR, clearance flag, lots |
-| `ted_award_winners.csv` | ~38k | Raw award × winner rows |
-| `suppliers.csv` | ~17k | **Supply, already deduplicated.** Name, country, registry id, size, award counts, top CPVs, total value, buyer countries |
-| `supplier_awards.csv` | ~48k | Awards joined to the deduplicated supplier key |
-| `nspa_notices.csv` | ~2.2k | **Demand.** NATO RFPs. No CPV, no value, no end buyer |
-| `eda_notices.csv` | ~120 | **Demand.** EDA calls |
-| `agencja_uzbrojenia_notices.csv` | ~340 | **Demand / context.** Polish Armament Agency |
-| `ecb_fx_rates.csv` | 33 | Already applied: EUR columns exist. Kept for display |
-| `eda_defence_data_*.csv` | ~3.9k | Context: national defence spend for the UI |
+| `buyers[]` | 6 contracting authorities with `stats` and their own `awards[]` (what they paid, to whom, how many bidders) | buyer persona |
+| `listings[]` | 6 curated open notices with CPV, description, published value, `walk_away_eur` (sealed), `candidates[]` as a match preview | demands |
+| `suppliers[]` | 30 real companies with `stats`, `offer_basis[]` per CPV class (wins, median, min, `floor_eur` sealed) and recent `awards[]` | offers, supplier persona |
+| `personas[]` | per listing: the buyer id and the top 3 supplier ids | agent directories |
 
-Supplier deduplication is done. Do not redo it.
+Demo listing: `ted:549292-2026`, Slovak Prison and Court Guard, 350 plate carriers,
+published €698,856. Personas: Fabrica Española de Confecciones (ESP, 15 wins in class
+358), STV GROUP (CZE, 10), GARED (CZE, 6). The buyer has 9 past awards at a median of
+€736k with a median of 2 bidders. All three suppliers have medians above the published
+value, so the negotiation is real, not decorative.
 
-### 2.2 Postgres schema, data side (Neon)
+### 2.3 Postgres (Neon)
 
-CPV (Common Procurement Vocabulary) is the EU classification of *what* is bought
-(e.g. 35613000 = drones). It is the matching key and stays on listings and awards.
-The identifier of a notice in its source system is `external_id` + `source_system`.
+Data side, loaded from the seed:
 
 ```
-buyers          id, name, country, city, legal_type
-suppliers       id, name, country, city, vat_id, size
-identifiers     entity_type (buyer|supplier), entity_id, system, external_id
-listings        id, source_system, external_id, url, buyer_id, main_cpv, cpv_codes,
-                title, description, deadline, estimated_value_eur, n_lots, framework,
-                security_clearance, eligibility (eu|nato|any), is_open, fetched_at
-awards          id, source_system, external_id, buyer_id, supplier_id, cpv,
-                value_eur, award_date, tenders_received
-fx_rates        currency, units_per_eur, rate_date
-
-supplier_stats  (view over awards) supplier_id, win_count, median_value_eur,
-                min_value_eur, last_award_date, cpv_classes
+buyers      id, name, country, city, legal_type
+suppliers   id, name, country, city, vat_id, size
+listings    id, external_id, url, buyer_id, main_cpv, cpv_codes, title, title_en, need,
+            description, language, deadline, estimated_value_eur, walk_away_eur,
+            defence_directive, eligibility, fetched_at
+awards      id, external_id, url, buyer_id?, buyer_name, supplier_id?, supplier_name,
+            cpv, value_eur, tenders_received, award_date, title
 ```
 
-Rules:
-
-- Load from `market.db` into raw tables first, build entity tables and the view with
-  SQL on top, keep the raw tables.
-- Counts, medians, top CPV classes are never stored on `suppliers`; they come from
-  `supplier_stats`. Materialise the view if the match query is slow.
-- Corporate fields (city, VAT, size) are filled where TED has them and left null
-  otherwise.
-- TED only in Neon for the demo. Other sources stay in the discovery folder unless
-  time remains.
-
-### 2.3 Market side tables
+Market side, written only through tools:
 
 ```
-rfqs        id, listing_id, buyer_id, state, need (json), budget_eur,
-            budget_tolerance (numeric, e.g. 1.10), quoting_deadline,
-            negotiation_deadline, negotiation_used (bool), awarded_quote_id,
-            running (bool), created_at, updated_at
-candidates  rfq_id, supplier_id, tier (1|2|3), price_low, price_high, price_floor,
-            open_deals_in_cpv (int, computed at invitation),
-            counter_price_eur, counter_lead_time_days, counter_message,
-            status (invited|quoted|declined|countered|final|awarded|accepted|declined_award)
-quotes      id, rfq_id, supplier_id, final (bool), price_eur, lead_time_days,
-            note, score, rank, created_at
-deals       id, rfq_id, quote_id, buyer_id, supplier_id, price_eur,
-            lead_time_days, contract_summary, closed_at
-events      id (bigserial cursor), rfq_id, actor, action, payload (json),
-            state_before, state_after, ts
+agents      token_hash, kind (buyer|supplier|observer), entity_id, name
+demands     id, listing_id, buyer_id, cpv, need, estimated_value_eur,
+            walk_away_eur (sealed), state (open|filled|withdrawn), created_at
+offers      id, supplier_id, cpv_class, cpv_codes, ask_eur, lead_time_days, note,
+            floor_eur (sealed), state (open|filled|withdrawn), created_at
+matches     id, demand_id, offer_id, tier, floor_eur (sealed, thread level),
+            turn (buyer|supplier), state (open|agreed|abandoned|superseded),
+            agreed_price_eur, agreed_lead_time_days, created_at, closed_at
+proposals   id, match_id, by (buyer|supplier), price_eur, lead_time_days, message,
+            cites (json: award urls), created_at
+events      id (bigserial), match_id?, demand_id?, offer_id?, actor, action,
+            payload (json), ts
 ```
 
-`events` is append only. The UI, Claude Desktop, the supplier responder and any
-resumed run read from it.
+An agreed match is the deal. There is no deals table. `events` is append only and is
+the only thing the admin UI reads.
 
-## 3. Architecture (Vercel + Neon)
-
-The repo is a Hono server (oRPC, Drizzle, Better Auth, MCP) deployed as a Vercel
-function, plus a Vite + TanStack Router SPA. Not Next.js. The run route lives in the
-Hono server.
+## 3. Architecture
 
 ```
-+------------------+                    +----------------------------------+
-| Browser (judge)  | --- POST run ----> |  Hono on Vercel (function)       |
-|  listing page    | <== stream ======= |                                  |
-|  match panel     |                    |  /api/listings/:id/matches       |      +--------------+
-|  event feed      |                    |  /api/suppliers/:id/matches      | <--> | Neon         |
-+------------------+                    |  /api/rfq            (create)    |      | Postgres     |
-                                        |  /api/rfq/:id/run    (stream)    |      +--------------+
-+------------------+                    |  /api/events?since=              |
-| Claude Desktop   | --- MCP http ----> |  /api/mcp  (same tools)          |
-| Claude Code      |                    |                                  |
-+------------------+                    |  lib/tools.ts   the market       |
-                                        |  lib/agents.ts  buyer + supplier |
-                                        |  lib/run.ts     the runner       |
-                                        +----------------------------------+
-                                                       |
-                                                       v  Anthropic API
+ agents/buyer-549292/        agents/supplier-ESP-28030062/   ... x3      Claude Desktop (human)
+   claude -p "Trade."           claude -p "Trade."                        OAuth door
+   CLAUDE.md  .mcp.json         CLAUDE.md  .mcp.json
+        |                            |                                        |
+        +------------- bearer token --+---------- streamable HTTP ------------+
+                                      v
+                        Hono on Vercel   /api/mcp  (eleven tools, lib/tools.ts)
+                                         /api/events?since=   (admin UI)
+                                      |
+                                      v
+                                 Neon Postgres
+                                      ^
+                                      |
+                        Vite SPA  /market  (admin UI, read only, polls events)
 ```
 
-Three layers, kept apart:
+Three parts, nothing else:
 
-- **The market: database plus tools.** Fourteen functions in `lib/tools.ts`. They sit
-  still until called. The state machine is not a process, it is the guards inside the
-  functions. `award` refuses unless the RFQ is in EVALUATING. Nobody "runs" it.
-- **The agents: prompt, model, tools.** The buyer agent decides when to stop waiting,
-  whom to counter and with what, whom to award and why. Supplier agents decide
-  whether to quote, at what price and lead time, and why. All judgement lives here.
-- **The runner: the thing that presses go.** A model has no clock. In Claude Desktop a
-  human types. On the server, `lib/run.ts` sends the buyer agent "look at the market
-  and act" every few seconds, and answers each event addressed to a supplier with one
-  supplier call. It knows nothing about procurement.
+- **The market.** One tools module. Every write is `UPDATE ... WHERE state = expected`
+  plus one event row. Zero rows updated means the guard failed and the tool returns
+  the reason. The server has no loop, no timer, no knowledge that agents exist.
+- **The agents.** Claude Code sessions. One directory per persona. The CLAUDE.md is the
+  real company. The `.mcp.json` carries its token. The agent's clock is the `wait` tool.
+- **The admin UI.** One read only page over the events table.
 
-Principles:
+Principles kept from the first plan: the database is the only state, every write checks
+state, visibility is enforced in tools and never in prompts, code decides bounds and the
+model decides within them, the events table is the only integration point.
 
-- **Matching is a query.** No process, no waiting. `search_supply` for a listing and
-  `search_demand` for a supplier return in under a second.
-- **A round is one request.** `POST /api/rfq/:id/run` hosts the runner for one round
-  and streams events to the browser. A round takes 30 to 90 s; Vercel Fluid Compute
-  allows several minutes. The endpoint exists because a Vercel function only executes
-  while a request is open. It is the compute context the agents live in, not an
-  orchestrator.
-- **The database is the only state.** After every action the new state is written.
-  If the function dies, clicking run again resumes from the current state.
-- **Every write checks state.** `UPDATE ... WHERE state = $expected`. Zero rows
-  updated means the guard failed. A resumed run cannot double quote or double award.
-- **One `running` flag** on the RFQ stops two tabs from running the same round.
-- **Visibility is enforced in tools, not prompts.** A supplier calling `get_rfq` gets
-  its own band, rank and counter, never another supplier's quote or floor. Rules
-  between parties belong to the market, not to each party's prompt.
-- **One tool module, two transports.** `lib/tools.ts` is called in-process by the
-  agents and exposed over streamable HTTP at `/api/mcp` for Claude Desktop. A human
-  in Claude Desktop can play any supplier with the same tools.
-- **Code decides bounds, the model decides within bounds.** Filters, price bands,
-  counter bounds, score formula and transitions are code. Reading a Polish notice,
-  quote or decline, the counter to each supplier, award justification, accept or
-  decline are the model.
+## 4. Market rules
 
-### 3.1 The runner
+### 4.1 Tools (`lib/tools.ts`, exposed at `/api/mcp`)
 
-```
-POST /api/rfq/:id/run
-  set running = true (fail if already running)
-  open stream
-  in parallel, until RFQ is CLOSED or FAILED, or the time budget (90 s) is spent:
+Identity comes from the connection, never from arguments. Every tool receives
+`actor = { kind, entity_id }`.
 
-    buyer loop:
-      every 2 s: send the buyer agent "look at the market and act"
-      it may make up to 8 tool calls per wake-up (get_rfq, get_events,
-      score_quotes, counter, award)
+| Tool | Who | Input | Returns / effect |
+|---|---|---|---|
+| `whoami` | any | | the actor's own record: profile, stats, award history, open postings, open threads |
+| `search_listings` | any | cpv_prefix?, country?, text?, limit | open listings with published value and deadline |
+| `search_suppliers` | any | cpv_prefix?, country?, limit | suppliers with public stats |
+| `history` | any | entity_id | public award rows for a buyer or supplier, with TED URLs |
+| `my_market` | any | | demands, offers, matches and proposals where the actor is a party. Observer sees all |
+| `wait` | any | since (event id), timeout_s ≤ 20 | long poll: events addressed to the actor since the cursor, new cursor |
+| `post_demand` | buyer | listing_id, need? | demand in `open`; walk-away copied from listing; runs matching; events to every matched supplier. Guard: listing open, actor owns it |
+| `post_offer` | supplier | cpv_class, ask_eur, lead_time_days, note | offer in `open`; floor from the supplier's class basis; runs matching; events to every matched buyer. Guards: ask ≥ floor, one open offer per class |
+| `propose` | party | match_id, price_eur, lead_time_days, message, cites? | new standing proposal, turn flips. Guards in 4.4 |
+| `accept` | party | match_id | signs the other side's standing proposal: match `agreed`, demand `filled`, buyer's other matches `superseded`, offer `filled`. Guard: a standing proposal by the other side exists |
+| `walk_away` | party | match_id, reason | match `abandoned`, reason visible to the other side |
 
-    supplier responder:
-      poll events since cursor
-      for each event addressed to a supplier (invited, countered, awarded):
-        one structured model call for that supplier, in parallel with the others
-        validate the output (floor, phase), write it through submit_quote /
-        decline / accept_award / decline_award
+Eleven tools. No create_rfq, no score, no counter, no award, no accept_award.
 
-    push new events to the stream as they land
-  set running = false
-```
+### 4.2 Matching (pure SQL, runs inside both post tools)
 
-Supplier agents have no tool loop and no memory. Each decision is one model call
-with structured output. The buyer is the only looping agent. This keeps the surface
-small and the round predictable while the feed still shows supplier reasoning.
+For a new demand, candidate offers; for a new offer, candidate demands. Same rule
+both ways:
 
-`MOCK_SUPPLIERS=1` replaces the supplier model call with code: quote at the middle
-of the band, canned reason. For rehearsal and as the stage fallback only.
-
-### 3.2 Notifications
-
-Nobody waits, so nobody is notified. The browser holds the stream for the running
-round and otherwise reads `/api/events?since=cursor` on page load. Claude Desktop
-reads the same tables through MCP.
-
-### 3.3 Later: always-on agents
-
-If the round is stable with two hours left, the same runner can be started by a small
-always-on process (Railway, Fly, or a laptop) that polls for RFQs not in a terminal
-state. Then the browser only creates the RFQ and the agents notice on their own. The
-agent code does not change, only who calls it.
-
-## 4. MCP tools (`lib/tools.ts`)
-
-### Read, any client
-
-| Tool | Input | Returns |
-|---|---|---|
-| `search_demand` | cpv_prefix, countries[], text, open_only, limit | listings with budget EUR, deadline, eligibility |
-| `search_supply` | listing_id or cpv_prefix, countries[], limit | tiered candidate suppliers with stats |
-| `get_listing` | listing_id | notice + buyer + derived fields |
-| `get_supplier` | supplier_id | profile + stats + past awards |
-| `get_rfq` | rfq_id, as (buyer \| supplier_id) | state, need, deadlines; buyer sees all candidates, quotes, ranks; a supplier sees only its own band, status, rank, counter |
-| `get_events` | rfq_id?, since, as | event rows filtered by the same visibility, new cursor |
-
-### Buyer
-
-| Tool | Input | Effect / guard |
-|---|---|---|
-| `create_rfq` | listing_id, need, quoting_deadline | RFQ in QUOTING; server runs tiered match, stores price band, floor and open deal count per candidate. Guard: listing open, ≥ 1 candidate else FAILED |
-| `score_quotes` | rfq_id | ranks current quotes (final ones after negotiation). Pure code. Guard: QUOTING with every candidate answered or `quoting_deadline` passed → EVALUATING; or NEGOTIATING with every countered supplier answered or `negotiation_deadline` passed → EVALUATING |
-| `counter` | rfq_id, supplier_id, price_eur, lead_time_days, message, negotiation_deadline | stores a counter on that candidate, state NEGOTIATING. Guards: EVALUATING, `negotiation_used` false (set true on first counter), supplier has quoted, once per supplier, price between 0.85 × and 1.0 × that supplier's own quote. No floor is checked, so nothing leaks |
-| `award` | rfq_id, quote_id, justification | state AWARDED. Guards: EVALUATING, price ≤ budget, or price ≤ budget × tolerance with a justification. Non rank 1 requires justification |
-
-### Supplier
-
-| Tool | Input | Effect / guard |
-|---|---|---|
-| `submit_quote` | rfq_id, supplier_id, price_eur, lead_time_days, note, final | one per supplier per phase. Guards: QUOTING (final=false) or countered in NEGOTIATING (final=true), invited, price ≥ floor |
-| `decline` | rfq_id, supplier_id, reason | status declined, reason visible to buyer. Guard: QUOTING |
-| `accept_award` | rfq_id, supplier_id | CLOSED, deal row. Guard: AWARDED, caller is awardee |
-| `decline_award` | rfq_id, supplier_id, reason | FAILED. Guard: AWARDED, caller is awardee |
-
-Fourteen tools. In NEGOTIATING a countered supplier that does not answer by the
-deadline has held, and its first quote stands.
-
-## 5. State machine
-
-```mermaid
-stateDiagram-v2
-    [*] --> QUOTING : create_rfq, tiered candidates invited
-    [*] --> FAILED : create_rfq, zero candidates
-    QUOTING --> EVALUATING : score_quotes, all answered or quoting deadline passed
-    EVALUATING --> AWARDED : award, within budget or tolerance
-    EVALUATING --> NEGOTIATING : counter, first counter sent, negotiation_used = false
-    EVALUATING --> FAILED : no quotes, or nothing fits after negotiation
-    NEGOTIATING --> EVALUATING : score_quotes, all countered answered or negotiation deadline passed
-    AWARDED --> CLOSED : accept_award
-    AWARDED --> FAILED : decline_award
-    CLOSED --> [*]
-    FAILED --> [*]
-```
-
-### Candidate status per RFQ
-
-```mermaid
-stateDiagram-v2
-    [*] --> invited : create_rfq
-    invited --> quoted : submit_quote
-    invited --> declined : decline
-    quoted --> countered : counter
-    countered --> final : submit_quote(final) or held at deadline
-    quoted --> awarded : award
-    final --> awarded : award
-    awarded --> accepted : accept_award
-    awarded --> declined_award : decline_award
-    accepted --> [*]
-    declined --> [*]
-    declined_award --> [*]
-```
-
-### Guards
-
-| Transition | Guard |
+| Tier | CPV |
 |---|---|
-| create → QUOTING | ≥ 1 candidate from tiered match |
-| QUOTING → EVALUATING | every candidate quoted or declined, or `quoting_deadline` passed. Buyer calls it |
-| EVALUATING → NEGOTIATING | ≥ 2 quotes, `negotiation_used` false, buyer's choice |
-| EVALUATING → AWARDED | price ≤ budget, or ≤ budget × tolerance with justification |
-| EVALUATING → FAILED | no quotes, or nothing within tolerance and `negotiation_used` true |
-| NEGOTIATING → EVALUATING | every countered supplier has a final quote, or `negotiation_deadline` passed. Buyer calls it |
-| AWARDED → CLOSED | accept_award by the awardee |
-| AWARDED → FAILED | decline_award by the awardee |
+| 1 | same 3 digit class |
+| 2 | same 2 digit division |
+| 3 | any division 35 |
 
-## 6. Workflows
+Plus: supplier eligible for the listing (`eu`, `nato`, `any`); supplier has at least
+one award in division 35; if the listing is under the defence directive, the supplier
+has at least one defence directive award. Order by tier, then wins in the matched
+class. Take 6. Every hit becomes a match row, unless its thread floor exceeds the
+buyer's walk-away (4.3), in which case no thread is opened and nobody is told why.
 
-### 6.1 The round
+### 4.3 Sealed limits (set by code, never returned)
 
-```mermaid
-sequenceDiagram
-    participant J as Judge (browser)
-    participant R as Runner (Vercel function)
-    participant DB as Neon
-    participant B as Buyer agent
-    participant S as Supplier agents
+- **Buyer walk-away** = published estimated value × 1.10. Stored on the demand.
+- **Offer floor** = min priced award in that CPV class × size margin (small 0.9,
+  medium 0.85, large 0.8). Stored on the offer.
+- **Thread floor** = max(offer floor, 0.6 × demand's published value). Stored on the
+  match. The second term stops a tiny historical lot from giving a supplier a floor
+  of €4k on a €700k demand.
 
-    J->>R: POST /api/rfq (listing)
-    R->>B: notice to structured need
-    B->>DB: create_rfq, QUOTING, candidates invited with bands
-    J->>R: POST /api/rfq/:id/run (stream opens)
-    R->>S: one call per invited supplier, in parallel
-    S->>DB: submit_quote / decline with reasons
-    R-->>J: events
-    B->>DB: get_rfq: all answered → score_quotes → EVALUATING
-    B->>DB: counter(supplier A, price, lead time), counter(supplier B, ...) → NEGOTIATING
-    R-->>J: events
-    R->>S: one call per countered supplier
-    S->>DB: submit_quote(final) or hold
-    R-->>J: events
-    B->>DB: score_quotes → EVALUATING, award with justification → AWARDED
-    R-->>J: events
-    R->>S: winner call
-    S->>DB: accept_award → CLOSED, deal row
-    R-->>J: deal closed, stream ends
+The buyer never learns any floor. The supplier never learns the walk-away. Both only
+ever see "outside your limit" when they overstep their own.
+
+### 4.4 Negotiation
+
+A thread opens with the supplier's public ask as the standing proposal and the buyer
+on turn. From there, three verbs:
+
+- `propose` guards: it is your turn; your price concedes against your own last
+  proposal (buyer non decreasing, supplier non increasing); buyer price ≤ walk-away;
+  supplier price ≥ thread floor; at most 3 proposals per side. After the third, only
+  `accept` or `walk_away`.
+- `accept` takes the other side's standing proposal as is. That is the contract.
+- `walk_away` ends the thread. Capacity, impossible lead time, insulting price, or
+  silence from the other side are all reasons the agent writes itself.
+
+A thread ends in at most seven moves. A buyer runs its threads in parallel and may
+use what it learns across them in its reasoning, but it can only write words in a
+message, never another supplier's number, because the server never gives it one to
+quote into another thread. (Strip digits from messages server side if you want this
+enforced rather than prompted. Not for the hackathon.)
+
+### 4.5 States
+
+```
+demand   open --accept--> filled          open --> withdrawn
+offer    open --accept--> filled          open --> withdrawn
+match    open --accept--> agreed          open --walk_away--> abandoned
+         open --other thread agreed--> superseded
 ```
 
-### 6.2 Matching (tiered query, pure SQL)
+### 4.6 Visibility
 
-For a listing, candidates are suppliers with at least one award that passes:
+| Sees | Buyer | Supplier | Observer |
+|---|---|---|---|
+| own postings and threads | yes | yes | all |
+| counterparty public profile and awards | yes | yes | yes |
+| other suppliers on the same demand | names and tiers only | nothing, not even a count | all |
+| any sealed limit | no | no | yes (admin UI only) |
 
-| Tier | CPV | Country |
-|---|---|---|
-| 1 | same 3 digit class as listing main CPV | eligible for listing (`eu`, `nato`, `any`) |
-| 2 | same 2 digit division | eligible |
-| 3 | any division 35 (defence and security) | eligible |
-
-Plus for every tier: if the listing requires security clearance, the supplier has
-≥ 1 award under the defence directive; if the listing has a budget, the supplier's
-median award value is between 0.2× and 5× that budget.
-
-Order by tier, then win count in the matched CPV. Take 6. The same query with the
-sides swapped gives a supplier its matching listings (`search_demand`). The supplier
-page shows this: a supplier agent finding the notice itself is the fix for the
-"missed" problem in the brief.
-
-### 6.3 Pricing (supplier side)
-
-Computed at invitation and stored on the candidate row:
-
-- base = median award value for this supplier in the matched CPV, scaled to the
-  listing budget when one exists (clipped to 0.5× to 1.5× budget)
-- low / high = base × 0.85 / 1.15; small firms shift down 5 %, large up 5 %
-- floor = minimum award value in the matched CPV × size margin
-  (small 0.9, medium 0.85, large 0.8)
-- open_deals_in_cpv = count of `deals` for this supplier in the matched CPV
-
-The supplier agent picks a price inside [low, high]. `submit_quote` rejects anything
-below floor.
-
-### 6.4 Scoring (buyer side)
-
-Fixed weights, three parts, 0 to 100:
-
-| Part | Weight | Rule |
-|---|---|---|
-| price | 60 | lowest quote = 100, others scaled linearly |
-| lead time | 25 | 100 if ≤ days to deadline, linear to 0 at 2× |
-| track record | 15 | wins in matched CPV, log scaled, capped |
-
-`score_quotes` returns the table. The buyer agent reads it and calls `counter` or
-`award`. It may pick a non rank 1 quote with a written justification, which is logged.
-
-### 6.5 Negotiation round (bilateral counters)
-
-Defence procurement under Directive 2009/81/EC uses the negotiated procedure by
-default: the buyer may negotiate with each bidder individually. We do exactly that,
-once per RFQ.
-
-1. After first quotes the buyer scores and picks a shortlist, usually the top three.
-2. For each shortlisted supplier the buyer calls `counter` with a price, a lead time
-   and a one line message. Code bounds the price to 85 to 100 % of that supplier's
-   own quote. The cheapest bidder may be asked only for a shorter lead time. The slow
-   expensive one may get no counter at all.
-3. Each countered supplier sees only its own counter, its own rank and the number of
-   bidders. Never another price. It answers once: accept the counter, improve on one
-   dimension, or hold. Floor still applies. Not answering by the deadline means hold.
-4. The buyer scores the finals and awards, within budget, or within tolerance with a
-   justification. FAILED only if nothing fits even with tolerance.
-
-Why this and not a broadcast "best and final offer": a broadcast target only fires
-when quotes are over budget, which is rare with bands anchored to the budget, so the
-negotiation would not appear on stage. Revealing the lowest price drives every
-supplier to its floor in one step. And a floor based target guard leaks floors to the
-buyer. Bilateral counters fire on every run, leak nothing, and show per supplier
-reasoning in the feed.
-
-Fallback if time runs short: a single `request_bafo(target)` broadcast, target
-between 85 % of the lowest quote and the lowest quote, suppliers see target and own
-rank only. One tool instead of per supplier counters.
-
-### 6.6 Capacity, and accept or decline the award
-
-Capacity is checked at the quote step, not at acceptance. The invitation carries the
-supplier's open deal count in this CPV; the supplier prompt says decline with that
-reason above two. A capacity decline is then visible early in the feed and a round
-cannot fail after award.
-
-The winner's agent is run once with the award details and decides:
-
-- **Price sanity:** awarded price ≥ its floor (always true by construction).
-- **Accept** writes the deal row and a contract summary. **Decline** → FAILED, kept
-  only so the tool set is honest.
-
-### 6.7 Decisions: code vs model
+### 4.7 Code vs model
 
 | Decision | Code | Model |
 |---|---|---|
-| Candidate tiers, filters, ordering | ✓ | |
-| Price band and floor, FX | ✓ | |
-| Counter price bounds | ✓ | |
-| Score formula and ranks | ✓ | |
-| State transitions, guards, visibility | ✓ | |
-| Notice (any language) → structured need | | buyer |
-| When to stop waiting and move the round | | buyer |
-| Whom to counter, with what price, lead time, message | | buyer |
-| Award choice and justification | | buyer |
-| Quote or decline, with reason, given band, history, capacity | | supplier |
-| Price inside band, lead time, note | | supplier |
-| Answer a counter: accept, improve, or hold | | supplier |
-| Accept or decline award | | supplier |
+| Matching, tiers, eligibility | ✓ | |
+| Walk-away, floors, turn order, concession, round cap | ✓ | |
+| State transitions and visibility | ✓ | |
+| Reading a Slovak notice, writing the need | | buyer |
+| Which CPV classes to offer in, the ask, the lead time | | supplier |
+| Every price, every message, every citation | | both |
+| When to push, when to accept, when to walk away | | both |
 
-### 6.8 Agent shapes
+## 5. Agents (Claude Code)
 
-| Agent | Shape | Tools | Budget |
-|---|---|---|---|
-| Buyer | tool loop, woken every 2 s by the runner | get_rfq, get_events, score_quotes, counter, award | 8 calls per wake-up, 90 s per round |
-| Supplier | one structured call per event addressed to it | none; output is validated and written by code | 1 call per phase |
+### 5.1 Identity
 
-Supplier output schema:
+The MCP route gets a second door in front of `requireMcpAuth`. If the bearer token
+hashes to a row in `agents`, the handler runs with that actor. Otherwise the existing
+OAuth path runs and a signed in human becomes an observer (or a supplier, if their
+user is mapped to one). A table rather than an env map so adding a persona needs no
+redeploy.
+
+### 5.2 Layout, generated from the seed
 
 ```
-{ action: quote | decline | accept_counter | improve | hold | accept_award | decline_award,
-  price_eur?, lead_time_days?, reason }
+agents/
+  buyer-549292/
+    CLAUDE.md     the Slovak authority: notice in Slovak + English need, its 9 past awards
+                  and bidder counts, how to negotiate, the loop
+    .mcp.json     market URL + this persona's bearer token
+  supplier-ESP-28030062/
+    CLAUDE.md     Fabrica Española: profile, 20 wins, class 358 median €990k, 15 recent
+                  awards with URLs, capacity, how to negotiate, the loop
+    .mcp.json
+  supplier-CZE-26181134/   STV GROUP
+  supplier-CZE-28819446/   GARED
 ```
+
+`bun agents:seed <listing_id>` reads `demo_seed.json` and `personas[]`, inserts the
+token rows, writes the directories. Re-runnable.
+
+### 5.3 CLAUDE.md shape
+
+Three parts. The first two are generated, the third is fixed text.
+
+1. **Who you are.** The real record, in prose and a table. Suppliers: every recent
+   award with buyer, CPV, value, bidders, date, URL. Buyers: the notice and your own
+   past purchases.
+2. **How you trade.** Suppliers: post offers in the classes you have won in, open
+   near your usual price, concede in steps, cite your own awards, decline when you
+   are at capacity (two agreed matches). Buyers: cite the supplier's awards and your
+   own, push hardest where you want to win, keep a second thread alive as leverage,
+   walk away early from what you will not take, accept when a price is right.
+3. **The loop.** Call `whoami`. Call `my_market`. If you are a supplier with no open
+   offer in your top classes, post one. Answer every thread where it is your turn.
+   Call `wait`. Repeat until your postings are filled or every thread is closed, then
+   stop.
+
+### 5.4 Running
+
+From each directory:
+
+```
+claude -p "Trade." --mcp-config .mcp.json --allowedTools "mcp__market__*" --max-turns 60
+```
+
+Headless, no permission prompts, turn capped. Suppliers start first and post their
+offers. The buyer starts last and posts the demand, so matches fire on screen. A
+human in Claude Desktop connected through the OAuth door can join as a fifth
+participant with the same tools.
+
+## 6. Admin UI (`/market`, Vite SPA)
+
+Read only. Polls `/api/events?since=cursor` every two seconds and rebuilds its view
+from events. No run button, no form. The agents are already running.
+
+```
++------------------+-------------------------------+------------------+
+| DEMAND           | MATCHES                       | OFFERS           |
+| Slovak Prison    |  ESP Fabrica  T1  open  3 msg |  ESP Fabrica 358 |
+|  Guard           |  CZE STV      T1  open  2 msg |  CZE STV     358 |
+|  35815000        |  CZE GARED    T1  agreed 380k |  CZE GARED   358 |
+|  698,856         |                               |  ...             |
+|  deadline 16 Dec |  [click a match]              |                  |
++------------------+-------------------------------+------------------+
+| THREAD  Slovak Prison Guard  x  Fabrica Espanola                      |
+|  price chart: proposals over moves, floor and walk-away as dashed     |
+|  lines (observer only)                                                |
+|  10:41 supplier  860,000  "Our class 358 median is 990k ..."   [TED]  |
+|  10:41 buyer     650,000  "Guardia Civil paid you 729k against        |
+|                           5 bidders last month ..."           [TED]  |
+|  10:42 supplier  780,000  ...                                         |
+|  10:42 buyer     accept                                               |
++-----------------------------------------------------------------------+
+| fetched from TED 2026-10-30 10:54   .   replay >                      |
++-----------------------------------------------------------------------+
+```
+
+- **Three columns.** Demands, matches with a state chip and message count, offers.
+  Hover a supplier for its public stats.
+- **Thread view.** Click a match. Proposals as a timeline with the agent's message
+  and its citations as links to TED notices. Above it a line chart of price per move
+  with the sealed floor and walk-away drawn as dashed lines. The observer sees the
+  limits; this is the one place they appear.
+- **Replay.** A button that streams the events of a past run from the table at
+  speed. This is the stage fallback.
+- **Badges.** TED fetch timestamp, event count, agents online (an agent is online if
+  it called `wait` in the last 30 seconds).
 
 ## 7. Demo script (under 90 seconds)
 
-1. Open the deployed URL. Click a real TED notice with a CPV and an estimated value
-   (not NSPA: those have no CPV, no value, no end buyer). The match panel shows five
-   real suppliers with their history and the fetch timestamp. Point at one: "won this
-   CPV in Germany twice".
-2. Click "Open RFQ". Feed: structured need in English next to the original title.
-3. Click "Run". Feed: three quotes with reasoning, two declines with reasons (one for
-   capacity), score table. Buyer counters two suppliers differently: the cheapest is
-   asked for a shorter lead time, the second for a price cut.
-4. Feed: one accepts the counter, one holds price but cuts lead time. Rescored. Buyer
-   awards with a justification.
-5. Feed: winner accepts. Deal card with contract summary.
-6. Supplier page: pick a Finnish supplier, `search_demand` shows the Polish notice it
-   would never have seen. One sentence on the "missed" problem.
-7. Switch to Claude Desktop connected to `/api/mcp`: "which Polish suppliers could bid
-   on this?" It calls `search_supply`. Same market, different client.
-8. Fallback: a closed deal already in the DB from the morning rehearsal, replayed
-   through the feed from the events table.
+1. Three supplier terminals are already trading. The admin UI shows three offers in
+   class 358 and no demand.
+2. Start the buyer terminal. It reads the Slovak notice, posts the demand in English.
+   Three matches appear.
+3. Threads fill. Point at one message: "Guardia Civil paid you €729k against 5
+   bidders last month", click the TED link.
+4. One thread agrees. The other two flip to superseded. The deal card shows price,
+   lead time, both real companies.
+5. Click the chart: the proposals converged between two lines nobody in the room
+   could see.
+6. Optional: a human in Claude Desktop asks "which Slovak or Czech suppliers could
+   bid on this?" It calls `search_suppliers`. Same market, different client.
+7. Fallback: replay the morning run.
 
 ## 8. Build order and ownership
 
 | Step | Deliverable | Owner |
 |---|---|---|
-| 1 | Neon schema, loader from `market.db`, buyers/suppliers/identifiers, `supplier_stats` view | data |
-| 2 | `tools.ts` signatures with Zod inputs committed first; then tiered match, `search_supply`, `search_demand`, `get_listing`, `get_supplier` | server |
-| 3 | `create_rfq` with bands and open deal counts, `submit_quote`, `decline`, `score_quotes` with deadline guard, `award`, `accept_award`, events, `get_rfq` visibility | server |
-| 4 | Buyer loop (Anthropic TS SDK), supplier structured call, runner with streaming, `MOCK_SUPPLIERS` flag | agents |
-| 5 | UI: listing page, match panel, event feed reading by cursor, deal card, run button, replay button | ui |
-| 6 | **Checkpoint: one deal closed through the UI on the deployed URL.** Everyone stops for this if it is not there | all |
-| 7 | `counter`, final quotes, negotiation deadline, buyer counter prompts | server + agents |
-| 8 | Supplier page with `search_demand`; fetch timestamp badges | ui |
-| 9 | `/api/mcp` read tools without OAuth or with a rehearsed login; Claude Desktop config | server |
-| 10 | Seed 4 curated TED listings, rehearse three times, capture the fallback run | all |
+| 1 | Postgres tables, loader from `demo_seed.json`, token door on `/api/mcp` | server |
+| 2 | Eleven tools with guards, matching SQL, events | server |
+| 3 | `bun agents:seed`: CLAUDE.md and `.mcp.json` per persona, token rows | agents |
+| 4 | **Checkpoint: buyer and one supplier in two terminals until a match agrees.** No UI needed. Everyone stops for this if it is not there | all |
+| 5 | Admin UI: three columns, thread view, chart, polling | ui |
+| 6 | Three suppliers, rehearse three times, capture a replay | all |
+| 7 | Replay button, badges, Claude Desktop observer login | ui + server |
 
-Steps 1 to 6 are a working marketplace with a closed deal. Step 7 is the negotiation
-beat. Step 9 is the protocol story.
-
-Working rules: the tool module is the contract, nobody adds a tool without updating
-the signatures first. The events table is the only integration point for the UI.
-Deploy from hour one. Freeze features with one hour left.
+Working rules: the tools module is the contract, nobody adds a tool without updating
+it first. The events table is the only integration point. Deploy from hour one. Freeze
+with one hour left.
 
 ## 9. Stack
 
-- Hono server (oRPC, Drizzle, Better Auth, MCP) as a Vercel function, Fluid Compute,
-  `maxDuration` set high on the run route
-- Vite + TanStack Router SPA on Vercel
-- Neon Postgres, pooled connection string (supplier calls run in parallel)
-- Anthropic TypeScript SDK, a fast model, buyer loop capped per wake-up, suppliers as
-  structured single calls
-- `/api/mcp` streamable HTTP, already in the server
-- Python scripts in `data_discovery/scripts/` stay as the offline data loaders
-- No payments, no live scraping on stage. The existing auth and organisation
-  scaffold stays out of every route a judge can reach
+- Hono (oRPC, Drizzle, Better Auth, MCP) as a Vercel function. `wait` holds a
+  request up to 20 seconds, well inside the function limit.
+- Vite + TanStack Router SPA on Vercel.
+- Neon Postgres, pooled connection string.
+- Claude Code as the agent runtime. No Anthropic SDK code in the server.
+- Python scripts in `data_discovery/scripts/` stay as the offline data loaders.
+- No payments, no live scraping on stage. Existing auth and organisation scaffold
+  stays out of every route a judge can reach.
 
 ## 10. Risks
 
-- **Cold starts.** Vercel functions and Neon compute both sleep when idle. Hit the
-  site two minutes before going on stage.
-- **Slow agents.** Fast model, buyer call cap, suppliers in parallel. A round must
-  finish in under 90 s; if it does not in rehearsal, cut supplier count to 4, then
-  flip `MOCK_SUPPLIERS`.
-- **Negotiation never fires.** Fixed by design: the buyer may counter whenever two or
-  more quotes exist. Rehearse that the buyer prompt actually does.
-- **No candidates for the chosen listing.** Seed 4 TED listings known to have ≥ 3
-  tier 1 candidates and a budget.
-- **NSPA listings break matching.** No CPV, no value. Keep them out of the demo path
-  or have the buyer agent infer a CPV from the title.
-- **Supply dominated by Romanian medical suppliers (CPV 33).** Restrict supply to
-  suppliers with ≥ 1 award in division 35 for the demo.
-- **MCP requires OAuth.** The Claude Desktop beat needs either a rehearsed login or an
-  unauthenticated read-only path for the six read tools. Decide in the first ten
-  minutes.
-- **Multilingual notices.** The buyer agent writes the need in English; the feed keeps
-  the original title visible.
+- **Idle agents burn turns.** Each `wait` is one turn. 60 turns at 20 seconds is about
+  20 minutes of life. Start suppliers no earlier than ten minutes before going on.
+- **Cold starts.** Vercel and Neon both sleep. Hit the site and the MCP endpoint two
+  minutes before.
+- **An agent proposes outside its limit.** The tool returns "outside your limit" and
+  the agent retries. If it loops, the turn cap ends it. Rehearse that the prompts
+  make agents move in sensible steps.
+- **Thread never converges.** Seven move cap guarantees an end. If every thread
+  abandons in rehearsal, lower the walk-away factor or raise the 0.6 anchor.
+- **Headless flags.** Verify `claude -p` with `--mcp-config` and `--allowedTools`
+  against the installed version in the first ten minutes.
+- **Seed quality.** Some candidates have absurd medians (a €2bn WB Electronics award
+  on the UAS listing). The thread floor rule filters them; the plate carrier listing
+  is the demo path and its three personas are sane.
+- **Multilingual notices.** The buyer agent writes the need in English; the UI shows
+  the original title beside it.
 
 ## 11. Deliberately left out
 
-Supplier tool loops and supplier memory across deals, always-on agent host, broadcast
-BAFO (kept only as the fallback), relaxing terms and reposting, widening as rounds,
-awardee decline fallthrough, per constraint compliance vectors, per RFQ scoring
-weights, supplier watchlists, consortium teaming, e-Zamówienia in Neon. Each was cut
-because the judge never sees it in 90 seconds or because it adds a failure mode on
-stage. First to add back if time remains: supplier memory (own past quotes and
-outcomes in this market as prompt context, one query on `events`), then the always-on
-host.
+Scoring formula, price bands, BAFO in any form, award and accept award steps,
+deadlines, server side runner, mock suppliers, supplier memory across sessions,
+consortium teaming, e-Zamówienia and NSPA in Postgres, the full 47k notice load.
+Each was cut because it added a state, a tool or a failure mode the judge never sees.
+First to add back if time remains: the full open notice table so `search_listings`
+has 701 rows instead of 6, then message digit stripping.
+
+`docs/negotiation-flow.html` describes the previous design (runner, BAFO) and is
+stale.

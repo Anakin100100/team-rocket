@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Negotiation pipeline — Team Rocket</title>
+<style>
+  :root { color-scheme: light dark; --accent: #d6006e; --muted: #777; --line: rgba(127,127,127,.35); }
+  body { margin: 0; padding: 32px 24px 64px; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; max-width: 1440px; margin-inline: auto; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  h2 { font-size: 18px; margin: 40px 0 8px; }
+  p.lead { color: var(--muted); margin: 0 0 24px; }
+  figure { margin: 0; }
+  svg { display: block; max-width: 100%; height: auto; font-family: inherit; }
+  figcaption { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .legend { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+  .legend i { width: 28px; height: 0; border-top: 2px dashed var(--accent); display: inline-block; }
+  table { border-collapse: collapse; width: 100%; max-width: 1000px; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; }
+  td.n { color: var(--muted); }
+  .prop { color: var(--accent); font-weight: 600; }
+  .box { fill: none; stroke: currentColor; stroke-width: 1.2; }
+  .prop-box { fill: none; stroke: #d6006e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+  .lane { stroke: currentColor; stroke-opacity: .25; stroke-width: 1; }
+  .arrow { stroke: currentColor; stroke-width: 1.3; fill: none; }
+  .parrow { stroke: #d6006e; stroke-width: 1.3; fill: none; stroke-dasharray: 5 4; }
+  .t { fill: currentColor; font-size: 12px; }
+  .ts { fill: currentColor; font-size: 11px; opacity: .75; }
+  .tp { fill: #d6006e; font-size: 11px; font-weight: 600; }
+  .th { fill: currentColor; font-size: 12px; font-weight: 600; letter-spacing: .02em; }
+  .badge { fill: none; stroke: currentColor; stroke-width: 1.2; }
+</style>
+</head>
+<body>
+
+<h1>Negotiation pipeline</h1>
+<p class="lead">How a buyer finds a supplier and ends up buying, with no human in the loop. Solid = in plan.md. Dashed pink = proposed changes from the review.</p>
+
+<h2>1. Finding each other is a query</h2>
+<figure>
+<svg viewBox="0 0 1100 350" role="img" aria-label="A TED notice on the left and a supplier's award history on the right both feed a three-tier CPV match in the middle, which outputs up to six candidates ordered by tier then wins.">
+  <defs>
+    <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+    </marker>
+    <marker id="a1p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#d6006e"/>
+    </marker>
+  </defs>
+
+  <rect class="box" x="20" y="50" width="250" height="150" rx="6"/>
+  <text class="th" x="36" y="74">Open notice (TED)</text>
+  <text class="t" x="36" y="98">main CPV, e.g. 35813000 helmets</text>
+  <text class="t" x="36" y="118">estimated value, EUR</text>
+  <text class="t" x="36" y="138">deadline, buyer country</text>
+  <text class="t" x="36" y="158">eligibility: eu | nato | any</text>
+  <text class="t" x="36" y="178">security clearance flag</text>
+
+  <rect class="box" x="830" y="50" width="250" height="150" rx="6"/>
+  <text class="th" x="846" y="74">Supplier (real award history)</text>
+  <text class="t" x="846" y="98">CPV classes it has won</text>
+  <text class="t" x="846" y="118">win count, median value, EUR</text>
+  <text class="t" x="846" y="138">country, size</text>
+  <text class="t" x="846" y="158">awards under defence directive</text>
+  <text class="t" x="846" y="178">last award date</text>
+
+  <rect class="box" x="470" y="50" width="160" height="38" rx="4"/>
+  <text class="t" x="550" y="74" text-anchor="middle">Tier 1 · same CPV class</text>
+  <rect class="box" x="420" y="98" width="260" height="38" rx="4"/>
+  <text class="t" x="550" y="122" text-anchor="middle">Tier 2 · same CPV division (2 digits)</text>
+  <rect class="box" x="370" y="146" width="360" height="38" rx="4"/>
+  <text class="t" x="550" y="170" text-anchor="middle">Tier 3 · any division 35, defence and security</text>
+
+  <text class="ts" x="550" y="212" text-anchor="middle">every tier: eligible for the notice · clearance history if required · median value within 0.2× to 5× budget</text>
+
+  <line class="arrow" x1="270" y1="125" x2="368" y2="125" marker-end="url(#a1)"/>
+  <text class="ts" x="319" y="116" text-anchor="middle">search_supply</text>
+  <text class="ts" x="319" y="140" text-anchor="middle">buyer pulls</text>
+
+  <line class="parrow" x1="830" y1="125" x2="732" y2="125" marker-end="url(#a1p)"/>
+  <text class="tp" x="781" y="116" text-anchor="middle">search_demand</text>
+  <text class="tp" x="781" y="140" text-anchor="middle">supplier pushes</text>
+
+  <line class="arrow" x1="550" y1="222" x2="550" y2="262" marker-end="url(#a1)"/>
+  <rect class="box" x="330" y="264" width="440" height="56" rx="6"/>
+  <text class="t" x="550" y="287" text-anchor="middle">Up to 6 candidates, ordered by tier, then wins in the matched CPV</text>
+  <text class="ts" x="550" y="306" text-anchor="middle">each gets a private price band and floor computed from its own awards → invited to the RFQ</text>
+</svg>
+<figcaption>Both sides come from public data. The buyer pulls candidates per notice today. Letting a supplier agent push itself into a notice it found is the proposed fix for the "missed" problem in the brief.</figcaption>
+</figure>
+
+<h2>2. From invitation to a closed deal</h2>
+<figure>
+<svg viewBox="0 0 1400 615" role="img" aria-label="Swimlane diagram with three lanes, buyer agent, server code, and supplier agents, across six phases: invite, quote, score, best and final offer, award, accept. Arrows carry tool names. The RFQ state moves from QUOTING through EVALUATING and BAFO to AWARDED and CLOSED.">
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+
+  <line class="lane" x1="235" y1="26" x2="1285" y2="26"/>
+  <rect class="badge" x="140" y="12" width="190" height="28" rx="14"/><text class="th" x="235" y="31" text-anchor="middle">1 · QUOTING</text>
+  <rect class="badge" x="350" y="12" width="190" height="28" rx="14"/><text class="th" x="445" y="31" text-anchor="middle">2 · QUOTING → EVALUATING</text>
+  <rect class="badge" x="560" y="12" width="190" height="28" rx="14"/><text class="th" x="655" y="31" text-anchor="middle">3 · EVALUATING</text>
+  <rect class="badge" x="770" y="12" width="190" height="28" rx="14"/><text class="th" x="865" y="31" text-anchor="middle">4 · BAFO → EVALUATING</text>
+  <rect class="badge" x="980" y="12" width="190" height="28" rx="14"/><text class="th" x="1075" y="31" text-anchor="middle">5 · EVALUATING → AWARDED</text>
+  <rect class="badge" x="1190" y="12" width="190" height="28" rx="14"/><text class="th" x="1285" y="31" text-anchor="middle">6 · AWARDED → CLOSED</text>
+
+  <line class="lane" x1="0" y1="50" x2="1400" y2="50"/>
+  <line class="lane" x1="0" y1="220" x2="1400" y2="220"/>
+  <line class="lane" x1="0" y1="390" x2="1400" y2="390"/>
+  <line class="lane" x1="0" y1="560" x2="1400" y2="560"/>
+  <text class="th" x="12" y="130">Buyer agent</text><text class="ts" x="12" y="147">model</text>
+  <text class="th" x="12" y="300">Server</text><text class="ts" x="12" y="317">code + Postgres</text>
+  <text class="th" x="12" y="470">Supplier agents</text><text class="ts" x="12" y="487">model, one per candidate</text>
+
+  <!-- col 0: invite -->
+  <rect class="box" x="147" y="103" width="176" height="64" rx="5"/>
+  <text class="t" x="235" y="128" text-anchor="middle">Reads the notice, any language,</text>
+  <text class="t" x="235" y="145" text-anchor="middle">writes the structured need</text>
+  <line class="arrow" x1="235" y1="167" x2="235" y2="271" marker-end="url(#a2)"/>
+  <text class="ts" x="241" y="222">create_rfq(listing, need)</text>
+
+  <rect class="box" x="147" y="273" width="176" height="64" rx="5"/>
+  <text class="t" x="235" y="292" text-anchor="middle">Tiered match → 6 candidates.</text>
+  <text class="t" x="235" y="308" text-anchor="middle">Price band + floor per candidate</text>
+  <text class="t" x="235" y="324" text-anchor="middle">from its own award history</text>
+  <line class="arrow" x1="235" y1="337" x2="235" y2="441" marker-end="url(#a2)"/>
+  <text class="ts" x="241" y="392">invite, with private band</text>
+
+  <rect class="box" x="147" y="443" width="176" height="64" rx="5"/>
+  <text class="t" x="235" y="468" text-anchor="middle">Each candidate is invited:</text>
+  <text class="t" x="235" y="485" text-anchor="middle">sees need, deadline, own band</text>
+
+  <!-- col 1: quote -->
+  <rect class="box" x="357" y="443" width="176" height="64" rx="5"/>
+  <text class="t" x="445" y="462" text-anchor="middle">Quote: price inside band,</text>
+  <text class="t" x="445" y="478" text-anchor="middle">lead time, note.</text>
+  <text class="t" x="445" y="494" text-anchor="middle">Or decline, with a reason</text>
+  <line class="arrow" x1="445" y1="443" x2="445" y2="339" marker-end="url(#a2)"/>
+  <text class="ts" x="451" y="392">submit_quote / decline</text>
+
+  <rect class="box" x="357" y="273" width="176" height="64" rx="5"/>
+  <text class="t" x="445" y="292" text-anchor="middle">Guards: invited, in QUOTING,</text>
+  <text class="t" x="445" y="308" text-anchor="middle">price ≥ floor, one per phase.</text>
+  <text class="t" x="445" y="324" text-anchor="middle">All answered → EVALUATING</text>
+
+  <rect class="prop-box" x="357" y="513" width="176" height="42" rx="5"/>
+  <text class="tp" x="445" y="530" text-anchor="middle">+ own past outcomes here</text>
+  <text class="tp" x="445" y="545" text-anchor="middle">+ decline if 2 open deals in CPV</text>
+
+  <!-- col 2: score and decide -->
+  <rect class="box" x="567" y="273" width="176" height="64" rx="5"/>
+  <text class="t" x="655" y="292" text-anchor="middle">score_quotes, pure code:</text>
+  <text class="t" x="655" y="308" text-anchor="middle">price 60 · lead time 25 · record 15</text>
+  <text class="t" x="655" y="324" text-anchor="middle">→ ranked table</text>
+  <line class="arrow" x1="655" y1="273" x2="655" y2="169" marker-end="url(#a2)"/>
+  <text class="ts" x="661" y="222">ranked table</text>
+
+  <rect class="box" x="567" y="103" width="176" height="64" rx="5"/>
+  <text class="t" x="655" y="122" text-anchor="middle">Reads the table.</text>
+  <text class="t" x="655" y="138" text-anchor="middle">Best ≤ budget → award now,</text>
+  <text class="t" x="655" y="154" text-anchor="middle">else request_bafo(target, msg)</text>
+
+  <rect class="prop-box" x="567" y="60" width="176" height="36" rx="5"/>
+  <text class="tp" x="655" y="76" text-anchor="middle">may call BAFO whenever ≥ 2 quotes,</text>
+  <text class="tp" x="655" y="90" text-anchor="middle">not only when over budget</text>
+
+  <path class="arrow" d="M 743 150 H 790 V 250 H 865 V 271" marker-end="url(#a2)"/>
+  <text class="ts" x="796" y="244">request_bafo → state BAFO</text>
+
+  <!-- col 3: BAFO -->
+  <rect class="box" x="777" y="273" width="176" height="64" rx="5"/>
+  <text class="t" x="865" y="292" text-anchor="middle">State BAFO, once per RFQ.</text>
+  <text class="t" x="865" y="308" text-anchor="middle">Each quoted supplier sees</text>
+  <text class="t" x="865" y="324" text-anchor="middle">the target and its own rank</text>
+  <rect class="prop-box" x="777" y="343" width="176" height="36" rx="5"/>
+  <text class="tp" x="865" y="359" text-anchor="middle">hide the lowest price:</text>
+  <text class="tp" x="865" y="373" text-anchor="middle">no race to the floor</text>
+
+  <line class="arrow" x1="835" y1="337" x2="835" y2="441" marker-end="url(#a2)"/>
+  <text class="ts" x="829" y="392" text-anchor="end">target, rank</text>
+  <line class="arrow" x1="895" y1="443" x2="895" y2="339" marker-end="url(#a2)"/>
+  <text class="ts" x="901" y="392">submit_quote(final)</text>
+  <text class="ts" x="901" y="406">→ EVALUATING</text>
+
+  <rect class="box" x="777" y="443" width="176" height="64" rx="5"/>
+  <text class="t" x="865" y="462" text-anchor="middle">Final offer: cut price, or hold</text>
+  <text class="t" x="865" y="478" text-anchor="middle">price and cut lead time,</text>
+  <text class="t" x="865" y="494" text-anchor="middle">or pass: first quote stands</text>
+
+  <!-- col 4: award -->
+  <rect class="box" x="987" y="273" width="176" height="64" rx="5"/>
+  <text class="t" x="1075" y="292" text-anchor="middle">Score the final offers.</text>
+  <text class="t" x="1075" y="308" text-anchor="middle">Guard: price ≤ budget.</text>
+  <text class="t" x="1075" y="324" text-anchor="middle">Nothing fits → FAILED, reason logged</text>
+  <line class="arrow" x1="1045" y1="273" x2="1045" y2="169" marker-end="url(#a2)"/>
+  <text class="ts" x="1039" y="222" text-anchor="end">ranked table</text>
+  <line class="arrow" x1="1105" y1="167" x2="1105" y2="271" marker-end="url(#a2)"/>
+  <text class="ts" x="1111" y="222">award(quote, justification)</text>
+
+  <rect class="box" x="987" y="103" width="176" height="64" rx="5"/>
+  <text class="t" x="1075" y="122" text-anchor="middle">Picks the winner.</text>
+  <text class="t" x="1075" y="138" text-anchor="middle">Not rank 1? Must write a</text>
+  <text class="t" x="1075" y="154" text-anchor="middle">justification → AWARDED</text>
+
+  <!-- col 5: accept -->
+  <rect class="box" x="1197" y="273" width="176" height="64" rx="5"/>
+  <text class="t" x="1285" y="292" text-anchor="middle">accept → deal row +</text>
+  <text class="t" x="1285" y="308" text-anchor="middle">contract summary → CLOSED.</text>
+  <text class="t" x="1285" y="324" text-anchor="middle">decline → FAILED</text>
+  <line class="arrow" x1="1255" y1="337" x2="1255" y2="441" marker-end="url(#a2)"/>
+  <text class="ts" x="1249" y="392" text-anchor="end">award details</text>
+  <line class="arrow" x1="1315" y1="443" x2="1315" y2="339" marker-end="url(#a2)"/>
+  <text class="ts" x="1321" y="392">accept_award</text>
+
+  <rect class="box" x="1197" y="443" width="176" height="64" rx="5"/>
+  <text class="t" x="1285" y="462" text-anchor="middle">Winner's agent only:</text>
+  <text class="t" x="1285" y="478" text-anchor="middle">price ≥ floor, capacity ok</text>
+  <text class="t" x="1285" y="494" text-anchor="middle">→ accept_award / decline_award</text>
+
+  <rect class="box" x="140" y="574" width="1240" height="32" rx="5"/>
+  <text class="t" x="760" y="594" text-anchor="middle">Every tool call appends to <tspan font-weight="600">events</tspan> (cursor). The browser streams it, Claude Desktop reads the same rows over MCP, a resumed run continues from the current state.</text>
+</svg>
+<figcaption>Code owns the bounds: candidates, bands, floors, score formula, state guards. The model owns the decisions inside them: the need, each quote or decline, the BAFO target, the award, the acceptance.</figcaption>
+<p class="legend"><i></i> dashed pink = proposed change from the review, not yet in plan.md</p>
+</figure>
+
+<h2>3. Who drives the loop</h2>
+<p class="lead">Two ways to run the same state machine. The tools and guards are identical. What changes is who decides that it is time to act.</p>
+<figure>
+<svg viewBox="0 0 1120 330" role="img" aria-label="Left: the plan, where a server run loop reads the RFQ state and invokes the buyer or supplier agents, which call tools. Right: proposed, where each agent runs its own loop of reading the RFQ and events, deciding, acting or waiting, against a server that only enforces guards and records events.">
+  <defs>
+    <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+    </marker>
+    <marker id="a3p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#d6006e"/>
+    </marker>
+  </defs>
+
+  <!-- left: plan -->
+  <text class="th" x="270" y="22" text-anchor="middle">Plan: the server drives</text>
+  <rect class="box" x="150" y="40" width="240" height="56" rx="5"/>
+  <text class="t" x="270" y="62" text-anchor="middle">POST /rfq/:id/run</text>
+  <text class="t" x="270" y="80" text-anchor="middle">loop: read state → switch → invoke</text>
+
+  <line class="arrow" x1="210" y1="96" x2="150" y2="150" marker-end="url(#a3)"/>
+  <text class="ts" x="125" y="128" text-anchor="end">state = EVALUATING</text>
+  <line class="arrow" x1="330" y1="96" x2="390" y2="150" marker-end="url(#a3)"/>
+  <text class="ts" x="415" y="128">state = QUOTING | BAFO</text>
+
+  <rect class="box" x="40" y="152" width="200" height="50" rx="5"/>
+  <text class="t" x="140" y="173" text-anchor="middle">buyer agent</text>
+  <text class="ts" x="140" y="190" text-anchor="middle">one tool loop, max 5 calls</text>
+  <rect class="box" x="300" y="152" width="200" height="50" rx="5"/>
+  <text class="t" x="400" y="173" text-anchor="middle">supplier agents, parallel</text>
+  <text class="ts" x="400" y="190" text-anchor="middle">one tool loop each, max 5 calls</text>
+
+  <line class="arrow" x1="140" y1="202" x2="140" y2="258" marker-end="url(#a3)"/>
+  <line class="arrow" x1="400" y1="202" x2="400" y2="258" marker-end="url(#a3)"/>
+  <rect class="box" x="40" y="260" width="460" height="50" rx="5"/>
+  <text class="t" x="270" y="281" text-anchor="middle">tools + guards + events</text>
+  <text class="ts" x="270" y="298" text-anchor="middle">server also moves QUOTING → EVALUATING when all answered</text>
+
+  <!-- divider -->
+  <line class="lane" x1="560" y1="10" x2="560" y2="320"/>
+
+  <!-- right: agents drive -->
+  <text class="th" x="840" y="22" text-anchor="middle" fill="#d6006e">Proposed: the agents drive</text>
+
+  <rect class="prop-box" x="600" y="40" width="220" height="112" rx="5"/>
+  <text class="tp" x="710" y="60" text-anchor="middle">buyer agent, own loop</text>
+  <text class="t" x="612" y="82">get_rfq / get_events(since)</text>
+  <text class="t" x="612" y="100">all answered or quoting deadline?</text>
+  <text class="t" x="612" y="118">→ score, bafo or award</text>
+  <text class="t" x="612" y="136">else wait, then look again</text>
+
+  <rect class="prop-box" x="860" y="40" width="220" height="112" rx="5"/>
+  <text class="tp" x="970" y="60" text-anchor="middle">each supplier agent, own loop</text>
+  <text class="t" x="872" y="82">get_rfq / get_events(since)</text>
+  <text class="t" x="872" y="100">invited? → quote or decline</text>
+  <text class="t" x="872" y="118">BAFO open? → final or pass</text>
+  <text class="t" x="872" y="136">awarded to me? → accept</text>
+
+  <line class="parrow" x1="710" y1="152" x2="710" y2="258" marker-end="url(#a3p)"/>
+  <line class="parrow" x1="970" y1="152" x2="970" y2="258" marker-end="url(#a3p)"/>
+  <text class="ts" x="840" y="195" text-anchor="middle">same 10 tools, same guards</text>
+  <text class="ts" x="840" y="212" text-anchor="middle">a human in Claude Desktop can</text>
+  <text class="ts" x="840" y="228" text-anchor="middle">play any supplier the same way</text>
+
+  <rect class="box" x="600" y="260" width="480" height="50" rx="5"/>
+  <text class="t" x="840" y="281" text-anchor="middle">tools + guards + events: a referee, not an orchestrator</text>
+  <text class="ts" x="840" y="298" text-anchor="middle">add: quoting deadline + step and time budget per agent, so a silent agent cannot stall the round</text>
+</svg>
+<figcaption>Left, the server is the conductor and the agents are callbacks. Right, every agent is a principal that watches the market and acts when it is its turn. The right side is the stronger story and the same protocol a third party would use, at the cost of a less predictable round length.</figcaption>
+</figure>
+
+<h2>4. Who sees what</h2>
+<p class="lead">The information design is the negotiation mechanism. This is what each party can read at the moment it decides.</p>
+<table>
+  <thead><tr><th>Fact</th><th>Buyer agent</th><th>Supplier agent</th><th>Judge, in the feed</th></tr></thead>
+  <tbody>
+    <tr><td>Structured need, deadline, original title</td><td>yes</td><td>yes</td><td>yes</td></tr>
+    <tr><td>Budget (estimated value from the notice)</td><td>yes</td><td>yes, it is public in the notice</td><td>yes</td></tr>
+    <tr><td>Own price band and floor</td><td class="n">no</td><td>own only</td><td>yes</td></tr>
+    <tr><td>Other suppliers' quotes</td><td>all</td><td class="n">never</td><td>all</td></tr>
+    <tr><td>Decline reasons</td><td>yes</td><td class="n">no</td><td>yes</td></tr>
+    <tr><td>Ranked score table</td><td>yes</td><td class="n">no</td><td>yes</td></tr>
+    <tr><td>BAFO target and message</td><td>sets it</td><td>yes</td><td>yes</td></tr>
+    <tr><td>Own rank in BAFO</td><td>yes</td><td>own only</td><td>yes</td></tr>
+    <tr><td>Lowest price in BAFO</td><td>yes</td><td class="prop">plan: yes · proposed: hidden</td><td>yes</td></tr>
+    <tr><td>Own past quotes and outcomes in this market</td><td class="n">no</td><td class="prop">proposed: yes</td><td>yes</td></tr>
+    <tr><td>Award justification, contract summary</td><td>writes it</td><td>winner reads it</td><td>yes</td></tr>
+  </tbody>
+</table>
+
+</body>
+</html>
