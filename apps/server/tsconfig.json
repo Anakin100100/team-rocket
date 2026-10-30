@@ -1,6 +1,9 @@
 {
   "extends": "@rocket/config/tsconfig.base.json",
-  "references": [{ "path": "../../packages/api" }],
+  "references": [
+    { "path": "../../packages/api" },
+    { "path": "../../packages/market" }
+  ],
   "compilerOptions": {
     "noEmit": true,
     "paths": {

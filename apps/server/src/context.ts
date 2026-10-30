@@ -2,7 +2,7 @@ import type { Context as ApiContext } from "@rocket/api/context";
 import type { Context as HonoContext } from "hono";
 
 import { ENV } from "./env.server";
-import { db, auth } from "./services";
+import { agents, db, auth } from "./services";
 
 export interface CreateContextOptions {
   context: HonoContext;
@@ -18,6 +18,7 @@ export const createContext = async ({
     db,
     session,
     adminOrganizationSlug: ENV.ADMIN_ORGANIZATION_SLUG,
+    agents,
   };
 };
 

@@ -16,6 +16,7 @@
     "@orpc/zod": "catalog:",
     "@rocket/auth": "workspace:*",
     "@rocket/db": "workspace:*",
+    "@rocket/market": "workspace:*",
     "@types/pg": "catalog:",
     "drizzle-orm": "catalog:",
     "zod": "catalog:"
