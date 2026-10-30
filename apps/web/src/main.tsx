@@ -12,9 +12,9 @@ const router = createRouter({
   scrollRestoration: true,
   defaultPendingComponent: () => <Loader />,
   context: { orpc, queryClient },
-  Wrap: function WrapComponent({ children }: { children: React.ReactNode }) {
-    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
-  },
+  Wrap: ({ children }: { children: React.ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  ),
 });
 
 declare module "@tanstack/react-router" {
@@ -23,7 +23,7 @@ declare module "@tanstack/react-router" {
   }
 }
 
-const rootElement = document.getElementById("app");
+const rootElement = document.querySelector("#app");
 
 if (!rootElement) {
   throw new Error("Root element not found");

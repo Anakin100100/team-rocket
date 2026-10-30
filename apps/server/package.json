@@ -19,6 +19,7 @@
     "@rocket/api": "workspace:*",
     "@rocket/auth": "workspace:*",
     "@rocket/db": "workspace:*",
+    "@vercel/functions": "^3.10.5",
     "better-auth": "catalog:",
     "evlog": "^2.33.1",
     "hono": "^4.13.7",

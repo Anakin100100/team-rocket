@@ -10,3 +10,8 @@
 local.db
 local.db-*
 .alchemy/
+# Local build output must not ship either: Vercel's Hono builder prefers an
+# existing apps/server/dist/index.mjs over compiling src, so a stale local (or
+# turbo-cache-restored) bundle would replace the server code.
+**/dist/
+**/.turbo/

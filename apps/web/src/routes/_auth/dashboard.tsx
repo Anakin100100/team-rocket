@@ -3,11 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { orpc } from "@/utils/orpc";
 
-export const Route = createFileRoute("/_auth/dashboard")({
-  component: RouteComponent,
-});
-
-function RouteComponent() {
+const RouteComponent = () => {
   const { session } = Route.useRouteContext();
 
   const privateData = useQuery(orpc.privateData.queryOptions());
@@ -19,4 +15,8 @@ function RouteComponent() {
       <p>API: {privateData.data?.message}</p>
     </div>
   );
-}
+};
+
+export const Route = createFileRoute("/_auth/dashboard")({
+  component: RouteComponent,
+});

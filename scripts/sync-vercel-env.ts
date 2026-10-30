@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import path from "node:path";
 import { parseEnv } from "node:util";
 
 const DEFAULT_ENVIRONMENT = "preview";
@@ -18,11 +18,16 @@ const OVERRIDE_KEYS = new Map([
 const args = process.argv.slice(2);
 const separatorIndex = args.indexOf("--");
 const scriptArgs = separatorIndex === -1 ? args : args.slice(0, separatorIndex);
-const forwardedArgs = separatorIndex === -1 ? [] : args.slice(separatorIndex + 1);
+const forwardedArgs =
+  separatorIndex === -1 ? [] : args.slice(separatorIndex + 1);
 
 const environment =
-  scriptArgs[0] && VALID_ENVIRONMENTS.has(scriptArgs[0]) ? scriptArgs[0] : DEFAULT_ENVIRONMENT;
-const remainingArgs = scriptArgs.slice(VALID_ENVIRONMENTS.has(scriptArgs[0] ?? "") ? 1 : 0);
+  scriptArgs[0] && VALID_ENVIRONMENTS.has(scriptArgs[0])
+    ? scriptArgs[0]
+    : DEFAULT_ENVIRONMENT;
+const remainingArgs = scriptArgs.slice(
+  VALID_ENVIRONMENTS.has(scriptArgs[0] ?? "") ? 1 : 0
+);
 // Split remaining args into env-file paths and passthrough Vercel CLI flags.
 // A bare token counts as a file only when it exists on disk, so flags and their
 // values (e.g. `--scope my-team`) forward correctly regardless of argument order.
@@ -50,13 +55,17 @@ for (const file of envFiles) {
 
   // Only the keys an app declares in its .env.schema are config; tools such as
   // database CLIs also write local-only values (claim links, direct URLs) to .env
-  const schemaFile = join(dirname(file), ".env.schema");
+  const schemaFile = path.join(path.dirname(file), ".env.schema");
   const declaredKeys = existsSync(schemaFile)
-    ? new Set(Object.keys(parseEnv(readFileSync(schemaFile, "utf8"))))
+    ? new Set(Object.keys(parseEnv(readFileSync(schemaFile, "utf-8"))))
     : undefined;
 
-  for (const [key, value] of Object.entries(parseEnv(readFileSync(file, "utf8")))) {
-    if (SKIP_KEYS.has(key)) continue;
+  for (const [key, value] of Object.entries(
+    parseEnv(readFileSync(file, "utf-8"))
+  )) {
+    if (SKIP_KEYS.has(key)) {
+      continue;
+    }
     if (declaredKeys && !declaredKeys.has(key)) {
       undeclaredKeys.push(key);
       continue;
@@ -71,11 +80,13 @@ for (const file of envFiles) {
 }
 
 if (undeclaredKeys.length > 0) {
-  console.log(`Skipping ${undeclaredKeys.join(", ")}: not declared in .env.schema.`);
+  console.log(
+    `Skipping ${undeclaredKeys.join(", ")}: not declared in .env.schema.`
+  );
 }
 if (emptyKeys.length > 0) {
   console.warn(
-    `Warning: ${emptyKeys.join(", ")} ${emptyKeys.length === 1 ? "is" : "are"} empty in your .env file(s) and won't be synced. Required values must be set before deploying, or the build or server fails env validation.`,
+    `Warning: ${emptyKeys.join(", ")} ${emptyKeys.length === 1 ? "is" : "are"} empty in your .env file(s) and won't be synced. Required values must be set before deploying, or the build or server fails env validation.`
   );
 }
 
@@ -84,13 +95,13 @@ if (env.size === 0) {
   process.exit(0);
 }
 
-const LOCAL_VALUE_PATTERN = /localhost|127\.0\.0\.1|0\.0\.0\.0|^file:/i;
+const LOCAL_VALUE_PATTERN = /localhost|127\.0\.0\.1|0\.0\.0\.0|^file:/iu;
 const localKeys = [...env.entries()]
   .filter(([, value]) => LOCAL_VALUE_PATTERN.test(value))
   .map(([key]) => key);
 if (localKeys.length > 0) {
   console.warn(
-    `Warning: ${localKeys.join(", ")} look${localKeys.length === 1 ? "s" : ""} like local-only value(s). Update them in your .env file(s) and re-run this sync if your deployed app should not point at local endpoints.`,
+    `Warning: ${localKeys.join(", ")} look${localKeys.length === 1 ? "s" : ""} like local-only value(s). Update them in your .env file(s) and re-run this sync if your deployed app should not point at local endpoints.`
   );
 }
 
@@ -112,10 +123,10 @@ for (const [key, value] of env.entries()) {
     {
       input: `${value}\n`,
       stdio: ["pipe", "inherit", "inherit"],
-      encoding: "utf8",
+      encoding: "utf-8",
       // Windows resolves bunx/npx/pnpm via .cmd shims, which need a shell
       shell: process.platform === "win32",
-    },
+    }
   );
 
   if (result.error) {

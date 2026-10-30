@@ -1,1 +1,6 @@
 env = false
+
+[install]
+# Vercel's Node builder resolves packages from a flat node_modules at the
+# function root; bun's default isolated layout breaks that resolution.
+linker = "hoisted"

@@ -21,6 +21,7 @@
     "lucide-react": "^1.41.0",
     "next-themes": "catalog:",
     "react": "^19.2.8",
+    "react-day-picker": "^10.0.2",
     "react-dom": "^19.2.8",
     "shadcn": "^4.21.0",
     "sonner": "catalog:",

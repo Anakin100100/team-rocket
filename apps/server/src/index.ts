@@ -1,3 +1,4 @@
+import { serve } from "@hono/node-server";
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { OpenAPIReferencePlugin } from "@orpc/openapi/plugins";
 import { onError } from "@orpc/server";
@@ -5,9 +6,11 @@ import { RPCHandler } from "@orpc/server/fetch";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { appRouter } from "@rocket/api/routers/index";
 import { initLogger } from "evlog";
-import { createAuthMiddleware, type BetterAuthInstance } from "evlog/better-auth";
+import { createAuthMiddleware } from "evlog/better-auth";
+import type { BetterAuthInstance } from "evlog/better-auth";
 import { createFsDrain } from "evlog/fs";
-import { evlog, type EvlogVariables } from "evlog/hono";
+import { evlog } from "evlog/hono";
+import type { EvlogVariables } from "evlog/hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 
@@ -26,7 +29,11 @@ const identifyUser = createAuthMiddleware(auth as BetterAuthInstance, {
 
 const app = new Hono<EvlogVariables>();
 
-app.use(evlog({ drain: process.env.NODE_ENV === "production" ? undefined : createFsDrain() }));
+app.use(
+  evlog({
+    drain: process.env.NODE_ENV === "production" ? undefined : createFsDrain(),
+  })
+);
 app.use("*", async (c, next) => {
   await identifyUser(c.get("log"), c.req.raw.headers, c.req.path);
   await next();
@@ -39,10 +46,10 @@ app.use(
     allowMethods: ["GET", "POST", "OPTIONS"],
     allowHeaders: ["Content-Type", "Authorization"],
     credentials: true,
-  }),
+  })
 );
 
-app.on(["POST", "GET"], "/api/auth/*", async (c) => auth.handler(c.req.raw));
+app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
 export const apiHandler = new OpenAPIHandler(appRouter, {
   plugins: [
@@ -70,7 +77,7 @@ app.use("/*", async (c, next) => {
 
   const rpcResult = await rpcHandler.handle(c.req.raw, {
     prefix: "/api/rpc",
-    context: context,
+    context,
   });
 
   if (rpcResult.matched) {
@@ -79,7 +86,7 @@ app.use("/*", async (c, next) => {
 
   const apiResult = await apiHandler.handle(c.req.raw, {
     prefix: "/api/api-reference",
-    context: context,
+    context,
   });
 
   if (apiResult.matched) {
@@ -89,11 +96,7 @@ app.use("/*", async (c, next) => {
   await next();
 });
 
-app.get("/", (c) => {
-  return c.text("OK");
-});
-
-import { serve } from "@hono/node-server";
+app.get("/", (c) => c.text("OK"));
 
 export default app;
 
@@ -105,6 +108,6 @@ if (!process.env.VERCEL) {
     },
     (info) => {
       console.log(`Server is running on http://localhost:${info.port}`);
-    },
+    }
   );
 }

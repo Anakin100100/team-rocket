@@ -1,19 +1,12 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import SignInForm from "@/components/sign-in-form";
-import SignUpForm from "@/components/sign-up-form";
-
+// Sign-in moved to Better Auth UI's /auth/sign-in; keep old links working.
 export const Route = createFileRoute("/login")({
-  component: RouteComponent,
+  beforeLoad: () => {
+    throw redirect({
+      to: "/auth/$path",
+      params: { path: "sign-in" },
+      replace: true,
+    });
+  },
 });
-
-function RouteComponent() {
-  const [showSignIn, setShowSignIn] = useState(false);
-
-  return showSignIn ? (
-    <SignInForm onSwitchToSignUp={() => setShowSignIn(false)} />
-  ) : (
-    <SignUpForm onSwitchToSignIn={() => setShowSignIn(true)} />
-  );
-}

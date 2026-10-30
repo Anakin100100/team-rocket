@@ -11,41 +11,39 @@ import { Input } from "@rocket/ui/components/input";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Loader2, Trash2 } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
+import type { FormEvent } from "react";
 
 import { orpc } from "@/utils/orpc";
 
 type TodoId = number;
 
-export const Route = createFileRoute("/todos")({
-  component: TodosRoute,
-});
-
-function TodosRoute() {
+const TodosRoute = () => {
   const [newTodoText, setNewTodoText] = useState("");
 
   const todos = useQuery(orpc.todo.getAll.queryOptions());
+  const isEmpty = !todos.isLoading && todos.data?.length === 0;
   const createMutation = useMutation(
     orpc.todo.create.mutationOptions({
       onSuccess: () => {
         todos.refetch();
         setNewTodoText("");
       },
-    }),
+    })
   );
   const toggleMutation = useMutation(
     orpc.todo.toggle.mutationOptions({
       onSuccess: () => {
         todos.refetch();
       },
-    }),
+    })
   );
   const deleteMutation = useMutation(
     orpc.todo.delete.mutationOptions({
       onSuccess: () => {
         todos.refetch();
       },
-    }),
+    })
   );
 
   const handleAddTodo = (e: FormEvent<HTMLFormElement>) => {
@@ -71,15 +69,25 @@ function TodosRoute() {
           <CardDescription>Manage your tasks efficiently</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleAddTodo} className="mb-6 flex items-center space-x-2">
+          <form
+            onSubmit={handleAddTodo}
+            className="mb-6 flex items-center space-x-2"
+          >
             <Input
               value={newTodoText}
               onChange={(e) => setNewTodoText(e.target.value)}
               placeholder="Add a new task..."
               disabled={createMutation.isPending}
             />
-            <Button type="submit" disabled={createMutation.isPending || !newTodoText.trim()}>
-              {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add"}
+            <Button
+              type="submit"
+              disabled={createMutation.isPending || !newTodoText.trim()}
+            >
+              {createMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Add"
+              )}
             </Button>
           </form>
 
@@ -87,9 +95,11 @@ function TodosRoute() {
             <div className="flex justify-center py-4">
               <Loader2 className="h-6 w-6 animate-spin" />
             </div>
-          ) : todos.data?.length === 0 ? (
+          ) : null}
+          {isEmpty ? (
             <p className="py-4 text-center">No todos yet. Add one above!</p>
-          ) : (
+          ) : null}
+          {todos.isLoading || isEmpty ? null : (
             <ul className="space-y-2">
               {todos.data?.map((todo) => (
                 <li
@@ -99,7 +109,9 @@ function TodosRoute() {
                   <div className="flex items-center space-x-2">
                     <Checkbox
                       checked={todo.completed}
-                      onCheckedChange={() => handleToggleTodo(todo.id, todo.completed)}
+                      onCheckedChange={() =>
+                        handleToggleTodo(todo.id, todo.completed)
+                      }
                       id={`todo-${todo.id}`}
                     />
                     <label
@@ -125,4 +137,8 @@ function TodosRoute() {
       </Card>
     </div>
   );
-}
+};
+
+export const Route = createFileRoute("/todos")({
+  component: TodosRoute,
+});
