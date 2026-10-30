@@ -12,6 +12,7 @@ import { ModeToggle } from "./mode-toggle";
 const links = [
   { to: "/", label: "Home" },
   { to: "/dashboard", label: "Dashboard" },
+  { to: "/market", label: "Market" },
 ] as const;
 
 const Header = () => {
@@ -25,8 +26,8 @@ const Header = () => {
 
   return (
     <div>
-      <div className="flex flex-row items-center justify-between px-2 py-1">
-        <nav className="flex gap-4 text-lg">
+      <div className="flex flex-row flex-wrap items-center justify-between gap-x-2 gap-y-1 px-2 py-1">
+        <nav className="flex gap-3 text-base sm:gap-4 sm:text-lg">
           {links.map(({ to, label }) => (
             <Link key={to} to={to}>
               {label}

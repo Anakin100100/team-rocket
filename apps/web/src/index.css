@@ -13,3 +13,13 @@ pre,
 samp {
   font-variant-ligatures: none;
 }
+
+/* Chart series (validated categorical slots 1 and 2; dark steps for the dark card). */
+:root {
+  --series-buyer: #2a78d6;
+  --series-supplier: #eb6834;
+}
+.dark {
+  --series-buyer: #3987e5;
+  --series-supplier: #d95926;
+}

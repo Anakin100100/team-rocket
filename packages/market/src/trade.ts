@@ -89,6 +89,10 @@ export const postDemand = (
     if (!demand) {
       throw new Error("Demand insert returned no row.");
     }
+    const [buyer] = await tx
+      .select({ name: buyers.name, country: buyers.country })
+      .from(buyers)
+      .where(eq(buyers.id, buyerId));
     await appendEvent(tx, {
       actor: actorLabel(actor),
       action: "demand_posted",
@@ -103,6 +107,9 @@ export const postDemand = (
         estimated_value_eur: demand.estimatedValueEur,
         deadline: row.deadline,
         url: row.url,
+        buyer_name: buyer?.name ?? null,
+        buyer_country: buyer?.country ?? null,
+        fetched_at: row.fetchedAt.toISOString(),
       },
       sealed: { walk_away_eur: walkAway },
     });
