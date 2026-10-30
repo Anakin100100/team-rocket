@@ -8,4 +8,3 @@ export {
   user,
   verification,
 } from "./auth";
-export { todo } from "./todo";
