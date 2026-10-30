@@ -376,3 +376,4 @@ run steps 5–6. Re-pull the production env only when you need to reset or resee
   gitignored. Reseeding rotates them; deleting a persona's row in `market_agents`
   revokes it immediately.
 
+
