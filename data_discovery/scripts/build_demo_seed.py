@@ -18,6 +18,7 @@ import argparse
 import csv
 import json
 import math
+import re
 import sqlite3
 import statistics
 from datetime import datetime, timezone
@@ -63,6 +64,34 @@ CURATED = {
     },
 }
 
+# BOM demo: demo_bom.csv (repo root) holds lots of a TED award notice that drew no tenders, which a
+# signed-in user re-sources on the market. The notice's buyer is seeded so the user can trade as it;
+# the winners of its other lots become the supplier personas.
+BOM_FILE = Path("../demo_bom.csv")
+BOM_NOTICE = "ted:604012-2026"
+BOM_BUYER = {
+    "id": "ted-buyer:7010032784",
+    "name": "Służba Kontrwywiadu Wojskowego",
+    "country": "POL",
+    "city": "Warszawa",
+    "legal_type": "cga",
+    "identifiers": [{"system": "ted", "external_id": "7010032784"}],
+}
+# market.db splits a notice's value equally across its winners. The TED result of the BOM notice
+# (https://ted.europa.eu/en/notice/604012-2026/xml) names each lot's winner and price, so its award
+# rows are restated per winner. Lot, winner, CPV, price in PLN, tenders received, lot title.
+BOM_LOT_RESULTS = [
+    (1, "POL:5240203283", "18443310", 59409.00, 4, "Beret kolor zielony"),
+    (2, "POL:5240203283", "18443320", 18145.00, 3, "Czapka zimowa"),
+    (3, "POL:5261039877", "35812000", 629452.50, 1, "Ubranie ochronne"),
+    (4, "POL:5741002058", "35812000", 620781.00, 1, "Mundur polowy"),
+    (5, "POL:5741002058", "35812000", 584619.00, 1, "Mundur polowy letni"),
+    (6, "POL:5472219464", "18424000", 54735.00, 1, "Rękawice zimowe pięciopalcowe"),
+    (7, "POL:7530003010", "18424000", 49980.00, None, "Rękawice taktyczne"),
+]
+ECB_RATES = Path("data/raw/ecb/eurofxref-daily.xml")
+PERSONA_CLASSES = 2                    # classes a supplier persona offers in (seed-agents.ts TOP_CLASSES)
+
 TIER_SIZE = 6
 BUDGET_LO, BUDGET_HI = 0.2, 5.0          # §6.2 median award vs budget
 BASE_CLIP_LO, BASE_CLIP_HI = 0.5, 1.5    # §6.3 base clipped around the budget
@@ -94,6 +123,39 @@ def load_staging(ids):
             if row["source_id"] in want:
                 extra[f"ted:{row['source_id']}"] = row
     return extra
+
+
+def ecb_rate(currency):
+    """EUR reference rate of `currency` from the ECB daily file, and its date."""
+    xml = ECB_RATES.read_text(encoding="utf-8")
+    rate = re.search(rf"currency='{currency}' rate='([0-9.]+)'", xml)
+    day = re.search(r"time='([0-9-]+)'", xml)
+    if not (rate and day):
+        raise SystemExit(f"no {currency} rate in {ECB_RATES}")
+    return float(rate.group(1)), day.group(1)
+
+
+def restate_lot_awards(con, notice, lot_results, per_eur):
+    """Shadow `awards` with a temp copy in which each winner's row for `notice` carries its own lots:
+    their summed price in EUR, their CPV and titles, and the most tenders any of them drew.
+    One row per winner, as market.db keeps it. market.db itself is not changed."""
+    con.execute("CREATE TEMP TABLE awards AS SELECT * FROM main.awards")
+    by_winner = {}
+    for _lot, sid, cpv, price, bids, title in lot_results:
+        by_winner.setdefault(sid, []).append((cpv, price, bids, title))
+    for sid, lots in by_winner.items():
+        bids = [b for _, _, b, _ in lots if b is not None]
+        con.execute(
+            "UPDATE temp.awards SET cpv = ?, value_eur = ?, n_bids = ?, title = ? "
+            "WHERE notice_id = ? AND supplier_id = ?",
+            (lots[0][0], round(sum(price for _, price, _, _ in lots) / per_eur, 2),
+             max(bids) if bids else None, "; ".join(title for *_, title in lots), notice, sid),
+        )
+
+
+def load_bom(path):
+    with path.open(encoding="utf-8", newline="") as f:
+        return [{**row, "estimated_value_eur": float(row["estimated_value_eur"])} for row in csv.DictReader(f)]
 
 
 def supplier_awards(con):
@@ -288,6 +350,32 @@ def match(listing, awards_by_sid, suppliers, top):
     return diversify(cands, top)
 
 
+def bom_personas(con, lines, awards_by_sid, suppliers):
+    """Winners of the BOM notice's other lots that the market would put in a thread on at least one
+    line: a class their persona offers in (its top PERSONA_CLASSES by wins) shares the line's CPV
+    division (tier 1 or 2, §4.2) and its floor is within the buyer's default walk-away (§4.3).
+    Returns (supplier id, lines it can take, wins in those classes), most wins first."""
+    winners = [r[0] for r in con.execute(
+        "SELECT DISTINCT supplier_id FROM awards WHERE notice_id = ? ORDER BY supplier_id", (BOM_NOTICE,))]
+    picked = []
+    for sid in winners:
+        sup = suppliers.get(sid)
+        if not sup:
+            continue
+        offered = offer_basis(awards_by_sid.get(sid, []), sup["size"])[:PERSONA_CLASSES]
+        takes, wins = [], 0
+        for line in lines:
+            walk_away = line["estimated_value_eur"] * WALK_AWAY_FACTOR
+            fits = [b for b in offered if b["cpv_class"][:2] == line["cpv"][:2] and b["floor_eur"] <= walk_away]
+            if fits:
+                takes.append(line["line"])
+                wins = max(wins, max(b["wins"] for b in fits))
+        if takes:
+            picked.append((sid, takes, wins))
+    picked.sort(key=lambda p: (-p[2], p[0]))
+    return picked
+
+
 def build_listing(t, x, fetched_at):
     lid = t["id"]
     ext = lid.removeprefix("ted:")
@@ -394,18 +482,34 @@ def print_summary(listings, suppliers, out, n_buyers):
           f"* = persona ({PERSONA_SUPPLIERS} suppliers per listing)")
 
 
+def print_bom_summary(lines, picked, suppliers):
+    print(f"\nBOM {BOM_FILE.name} ({BOM_NOTICE}), buyer {BOM_BUYER['name']}: suppliers only, the buyer is a user")
+    for line in lines:
+        v = line["estimated_value_eur"]
+        print(f"  line {line['line']}  CPV {line['cpv']}  budget {v:,.0f}  walk-away {v * WALK_AWAY_FACTOR:,.0f}  {line['title']}")
+    for sid, takes, _ in picked:
+        s = suppliers[sid]
+        offered = ", ".join(f"{b['cpv_class']} floor {b['floor_eur']:,.0f}" for b in s["offer_basis"][:PERSONA_CLASSES])
+        print(f"  *{s['name'][:40]:40s} lines {','.join(takes):5s} offers {offered}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--listings", nargs="*", default=list(CURATED))
     ap.add_argument("--top", type=int, default=TIER_SIZE)
     ap.add_argument("--out", default=str(OUT))
+    ap.add_argument("--bom", default=str(BOM_FILE), help='BOM csv for the signed-in buyer demo; "" to skip')
     args = ap.parse_args()
+    bom_path = Path(args.bom) if args.bom else None
 
     con = sqlite3.connect(DB)
     con.row_factory = sqlite3.Row
     extra = load_staging(args.listings)
     fetched_at = json.loads(FETCH_MARKER.read_text()).get("fetched_at") if FETCH_MARKER.exists() else None
     suppliers = {r["id"]: dict(r) for r in con.execute("SELECT * FROM suppliers")}
+    pln_per_eur, fx_date = ecb_rate("PLN")
+    if bom_path:
+        restate_lot_awards(con, BOM_NOTICE, BOM_LOT_RESULTS, pln_per_eur)
     awards_by_sid = supplier_awards(con)
 
     buyers, listings, used = {}, [], {}
@@ -422,6 +526,16 @@ def main():
             used[c["supplier_id"]] = True
         listings.append(listing)
 
+    bom_picked = []
+    if bom_path:
+        bom_lines = load_bom(bom_path)
+        bom_picked = bom_personas(con, bom_lines, awards_by_sid, suppliers)
+        buyer = dict(BOM_BUYER)
+        buyer["stats"], buyer["awards"] = buyer_awards(con, buyer["name"])
+        buyers[buyer["id"]] = buyer
+        for sid, _, _ in bom_picked:
+            used[sid] = True
+
     out_suppliers = [build_supplier(sid, suppliers[sid], awards_by_sid.get(sid, [])) for sid in used]
     personas = [
         {
@@ -431,6 +545,15 @@ def main():
         }
         for l in listings
     ]
+    if bom_path:
+        # No listing and no buyer persona: a signed-in user buys, as BOM_BUYER if they claim it.
+        personas.append({
+            "listing_id": None,
+            "bom_id": BOM_NOTICE,
+            "bom_file": bom_path.name,
+            "buyer_id": BOM_BUYER["id"],
+            "supplier_ids": [sid for sid, _, _ in bom_picked],
+        })
     seed = {
         "meta": {
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -449,6 +572,12 @@ def main():
                            "max(offer floor_eur, 0.6 × demand estimated_value_eur) and skips the match when that floor "
                            "exceeds walk_away_eur. All limits are sealed: stored, enforced, never returned. "
                            "candidates[].price_low/high are legacy band hints; the agent chooses its own ask",
+            "bom_rules": f"personas[] with bom_id: suppliers for the lines of {BOM_FILE.name}, lots of "
+                         f"{BOM_NOTICE} that drew no tenders. They are the winners of its other lots whose "
+                         f"persona classes (top {PERSONA_CLASSES} by wins) share a line's CPV division with a "
+                         "floor within the line's walk-away. That notice's awards are restated per lot from "
+                         f"its TED result, PLN at the ECB rate of {fx_date} ({pln_per_eur}) instead of "
+                         "market.db's equal split",
         },
         "buyers": list(buyers.values()),
         "listings": listings,
@@ -457,6 +586,8 @@ def main():
     }
     Path(args.out).write_text(json.dumps(seed, ensure_ascii=False, indent=2), encoding="utf-8")
     print_summary(listings, {s["id"]: s for s in out_suppliers}, args.out, len(buyers))
+    if bom_path:
+        print_bom_summary(bom_lines, bom_picked, {s["id"]: s for s in out_suppliers})
 
 
 if __name__ == "__main__":

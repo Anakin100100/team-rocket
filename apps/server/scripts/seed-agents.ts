@@ -2,7 +2,9 @@
 // persona with its CLAUDE.md (the real company, from public TED records) and
 // .mcp.json (market URL + its own bearer token), plus the token rows.
 //
-// Usage: bun agents:seed <listing_id> [--url <mcp url>] [--out <dir>]
+// Usage: bun agents:seed <listing_id | bom_id> [--url <mcp url>] [--out <dir>]
+//   A bom_id (e.g. ted:604012-2026) writes supplier agents only: the buyer of a
+//   BOM is a signed-in user, who can trade as the seeded buyer with set_company.
 //   --url  market endpoint the agents connect to (default: this server's /api/mcp)
 //   --out  where to write the directories (default: <repo>/agents)
 // Re-runnable: tokens are rotated and the files rewritten.
@@ -93,7 +95,13 @@ interface Seed {
     framework: boolean | null;
     defence_directive: boolean;
   }[];
-  personas: { listing_id: string; buyer_id: string; supplier_ids: string[] }[];
+  personas: {
+    listing_id: string | null;
+    bom_id?: string;
+    bom_file?: string;
+    buyer_id: string;
+    supplier_ids: string[];
+  }[];
 }
 
 const { values, positionals } = parseArgs({
@@ -112,11 +120,15 @@ const outDir = path.resolve(values.out ?? path.join(ROOT, "agents"));
 
 const seed = JSON.parse(readFileSync(SEED, "utf-8")) as Seed;
 const listing = seed.listings.find((entry) => entry.id === listingId);
-const persona = seed.personas.find((entry) => entry.listing_id === listingId);
+const persona = seed.personas.find(
+  (entry) => entry.listing_id === listingId || entry.bom_id === listingId
+);
 const buyer = seed.buyers.find((entry) => entry.id === persona?.buyer_id);
-if (!(listing && persona && buyer)) {
+// A BOM's persona set has no listing and no buyer persona.
+const bom = persona?.bom_id ? persona : null;
+if (!(persona && buyer && (bom || listing))) {
   console.error(
-    `No persona set for ${listingId}. Known: ${seed.personas.map((p) => p.listing_id).join(", ")}`
+    `No persona set for ${listingId}. Known: ${seed.personas.map((p) => p.listing_id ?? p.bom_id).join(", ")}`
   );
   process.exit(1);
 }
@@ -164,36 +176,39 @@ const LOOP_RULES = `- You run unattended: no human reads this session or answers
 - \`accept\` signs the other side's standing proposal exactly as it is. That is the contract.
 - Messages are short and specific. Argue from public records and cite their TED URLs in \`cites\`. Never invent numbers or awards.`;
 
-const buyerClaudeMd = () => `# You are ${buyer.name}
+const buyerClaudeMd = (
+  authority: Seed["buyers"][number],
+  notice: Seed["listings"][number]
+) => `# You are ${authority.name}
 
-You are the procurement agent of **${buyer.name}** (${buyer.city ?? ""}, ${buyer.country}), a real public contracting authority. You are buying through an agent marketplace where every supplier is also an agent seeded from its public award history. Everything below is public data from TED (ted.europa.eu).
+You are the procurement agent of **${authority.name}** (${authority.city ?? ""}, ${authority.country}), a real public contracting authority. You are buying through an agent marketplace where every supplier is also an agent seeded from its public award history. Everything below is public data from TED (ted.europa.eu).
 
-Your persona id is \`${buyer.id}\`.
+Your persona id is \`${authority.id}\`.
 
 ## Your notice
 
-- Listing: \`${listing.id}\` · ${link(listing.url)}
-- Original title (${listing.language ?? "?"}): ${listing.title}
-- In English: ${listing.title_en ?? "(translate it yourself)"}
-- Need: ${listing.need ?? ""}
-- CPV: ${listing.main_cpv} (${listing.cpv_codes.join(", ")})
-- Published estimated value: **${eur(listing.estimated_value_eur)}**
-- Deadline: ${listing.deadline ?? "n/a"} · procedure: ${listing.procedure ?? "n/a"} · lots: ${listing.n_lots ?? "n/a"}${listing.defence_directive ? " · defence directive" : ""}
+- Listing: \`${notice.id}\` · ${link(notice.url)}
+- Original title (${notice.language ?? "?"}): ${notice.title}
+- In English: ${notice.title_en ?? "(translate it yourself)"}
+- Need: ${notice.need ?? ""}
+- CPV: ${notice.main_cpv} (${notice.cpv_codes.join(", ")})
+- Published estimated value: **${eur(notice.estimated_value_eur)}**
+- Deadline: ${notice.deadline ?? "n/a"} · procedure: ${notice.procedure ?? "n/a"} · lots: ${notice.n_lots ?? "n/a"}${notice.defence_directive ? " · defence directive" : ""}
 
 Description, original language (truncated):
 
-> ${cell(listing.description).slice(0, DESCRIPTION_CHARS)}
+> ${cell(notice.description).slice(0, DESCRIPTION_CHARS)}
 
 ## Your purchasing record
 
-${buyer.stats.award_count} past awards, median ${eur(buyer.stats.median_value_eur)}, median ${buyer.stats.median_tenders_received ?? "?"} bidders per tender.
+${authority.stats.award_count} past awards, median ${eur(authority.stats.median_value_eur)}, median ${authority.stats.median_tenders_received ?? "?"} bidders per tender.
 
-${awardTable(buyer.awards, "supplier")}
+${awardTable(authority.awards, "supplier")}
 
 ## How you trade
 
 - Spend public money well. Aim to land at or below the published value. You have a sealed walk-away limit a little above it; if the market says "outside your limit", you offered too much.
-- Post your demand for \`${listing.id}\` with the need written in English. The market opens a private thread with each matching supplier, starting from its public ask. You are on turn in each.
+- Post your demand for \`${notice.id}\` with the need written in English. The market opens a private thread with each matching supplier, starting from its public ask. You are on turn in each.
 - Before your first move in a thread, read the supplier's \`history\`. Cite its own awards ("the Guardia Civil paid you €X against N bidders") and your own record to argue the price down.
 - Push hardest on the supplier you most want to win (best record in this CPV, credible lead time). Keep a second thread alive as leverage; you may say in words that you have other offers, but never quote another supplier's numbers.
 - Walk away early from a thread you will not take (no relevant record, absurd price, impossible lead time), with a reason.
@@ -204,7 +219,7 @@ ${LOOP_RULES}
 ## The loop
 
 1. Call \`whoami\`, then \`my_market\`.
-2. If you have no open demand for \`${listing.id}\`, call \`post_demand\`.
+2. If you have no open demand for \`${notice.id}\`, call \`post_demand\`.
 3. For every thread where it is your turn: \`propose\`, \`accept\` or \`walk_away\`.
 4. Call \`wait\` with the cursor from the previous \`wait\` (start at 0).
 5. Repeat from 2 until your demand is filled or every thread is closed. Then stop and write a one-paragraph summary of the outcome.
@@ -261,7 +276,7 @@ ${LOOP_RULES}
 `;
 };
 
-const RUN_COMMAND = `claude -p "Trade now: run the loop in CLAUDE.md until it ends." --model ${MODEL} --effort ${EFFORT} --mcp-config .mcp.json --strict-mcp-config --setting-sources local --allowedTools "mcp__market__*" --max-turns ${MAX_TURNS}`;
+const RUN_COMMAND = `claude -p "Trade now: run the loop in CLAUDE.md until it ends." --model ${MODEL} --effort ${EFFORT} --mcp-config .mcp.json --strict-mcp-config --setting-sources project,local --allowedTools "mcp__market__*" --max-turns ${MAX_TURNS}`;
 
 // --- Write --------------------------------------------------------------------------
 
@@ -282,7 +297,7 @@ const writePersona = async (
     });
   const dir = path.join(
     outDir,
-    dirName(kind, kind === "buyer" ? listing.external_id : id)
+    dirName(kind, kind === "buyer" && listing ? listing.external_id : id)
   );
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, "CLAUDE.md"), claudeMd);
@@ -319,15 +334,28 @@ for (const supplier of personaSuppliers) {
     )
   );
 }
-dirs.push(await writePersona("buyer", buyer.id, buyer.name, buyerClaudeMd()));
+if (!bom && listing) {
+  dirs.push(
+    await writePersona(
+      "buyer",
+      buyer.id,
+      buyer.name,
+      buyerClaudeMd(buyer, listing)
+    )
+  );
+}
+
+const startOrder = bom
+  ? `There is no buyer agent: the buyer is a signed-in user (Claude Desktop or Claude Code) sourcing \`${bom.bom_file}\`, lots of ${listingId} that drew no tenders. They can trade as ${buyer.name} with \`set_company\`. Start the suppliers first, then the user posts the BOM. From each directory:`
+  : "Start the suppliers first, then the buyer (plan.md §5.4). From each directory:";
 
 writeFileSync(
   path.join(outDir, "README.md"),
-  `# Agents for ${listing.id}
+  `# Agents for ${listingId}
 
-Generated by \`bun agents:seed ${listing.id}\` against ${mcpUrl}. Each directory is one persona: \`CLAUDE.md\` is the real company, \`.mcp.json\` holds its bearer token (gitignored; re-running the seed rotates every token).
+Generated by \`bun agents:seed ${listingId}\` against ${mcpUrl}. Each directory is one persona: \`CLAUDE.md\` is the real company, \`.mcp.json\` holds its bearer token (gitignored; re-running the seed rotates every token).
 
-Start the suppliers first, then the buyer (plan.md §5.4). From each directory:
+${startOrder}
 
 \`\`\`
 ${RUN_COMMAND}
@@ -339,7 +367,7 @@ ${dirs.map((dir) => `- \`${dir}\``).join("\n")}
 `
 );
 
-console.log(`Wrote ${dirs.length} personas for ${listing.id} → ${mcpUrl}`);
+console.log(`Wrote ${dirs.length} personas for ${listingId} → ${mcpUrl}`);
 for (const dir of dirs) {
   console.log(`  ${dir}`);
 }

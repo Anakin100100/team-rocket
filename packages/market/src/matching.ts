@@ -36,7 +36,8 @@ interface Pair {
 }
 
 // Tier 1: same 3-digit class · 2: same division · 3: both in defence (35).
-// Filters: never a company with itself, an open listing, eligibility, at least
+// Filters: never a company with itself, nor two users of one organization, an
+// open listing, eligibility, at least
 // one defence award and a defence-directive award when the listing needs one
 // (signed-in users are trusted and skip both), no earlier thread between the
 // two unless it was only superseded, and a thread floor the buyer could ever
@@ -84,6 +85,11 @@ const candidatePairs = async (
         and (not l.defence_directive
           or t.user_id is not null
           or coalesce((s.stats ->> 'defence_directive_awards')::int, 0) >= 1)
+        and not exists (
+          select 1 from market_traders bt
+            join member bm on bm.user_id = bt.user_id
+            join member sm on sm.organization_id = bm.organization_id
+          where bt.entity_id = d.buyer_id and sm.user_id = t.user_id)
         and not exists (
           select 1 from matches m join offers mo on mo.id = m.offer_id
           where m.demand_id = d.id and mo.supplier_id = o.supplier_id
