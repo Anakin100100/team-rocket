@@ -87,6 +87,9 @@ export const createAuth = (
     },
     plugins: [
       organization({
+        // Organizations are provisioned by the app (server-side `createOrganization`
+        // with a `userId`, which Better Auth treats as a system action), not by users.
+        allowUserToCreateOrganization: false,
         sendInvitationEmail: async ({
           id,
           email,

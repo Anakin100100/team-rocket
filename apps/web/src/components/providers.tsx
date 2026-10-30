@@ -40,7 +40,8 @@ const AuthLink = ({
   return <Link to={href} {...props} />;
 };
 
-const authPlugins = [organizationPlugin()];
+// Mirrors the server's `allowUserToCreateOrganization: false`.
+const authPlugins = [organizationPlugin({ allowOrganizationCreation: false })];
 
 export const Providers = ({
   children,

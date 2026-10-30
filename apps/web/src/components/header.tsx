@@ -27,7 +27,7 @@ const Header = () => {
           ))}
         </nav>
         <div className="flex items-center gap-2">
-          {session && <OrganizationSwitcher />}
+          {session && <OrganizationSwitcher hideCreate />}
           <ModeToggle />
           <UserButton />
         </div>
