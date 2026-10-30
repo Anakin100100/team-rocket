@@ -20,6 +20,12 @@ interface McpFile {
   };
 }
 
+interface OpenCodeConfig {
+  mcp?: {
+    servers?: Record<string, Record<string, unknown>>;
+  };
+}
+
 const { values } = parseArgs({
   options: {
     model: { type: "string", default: DEFAULT_MODEL },
@@ -28,6 +34,26 @@ const { values } = parseArgs({
 });
 
 const agentsDir = path.resolve(values.agents ?? DEFAULT_AGENTS_DIR);
+
+// Persona directories sit under the repo root, so OpenCode also loads the
+// root opencode.json. Disable every non-market server there: a persona must
+// trade only through its own token, never through the human's connection.
+const readInheritedServers = () => {
+  try {
+    const rootConfig = JSON.parse(
+      readFileSync(path.join(ROOT, "opencode.json"), "utf-8")
+    ) as OpenCodeConfig;
+    return rootConfig.mcp?.servers ?? {};
+  } catch {
+    return {};
+  }
+};
+
+const disabledServers = Object.fromEntries(
+  Object.entries(readInheritedServers())
+    .filter(([name]) => name !== "market")
+    .map(([name, server]) => [name, { ...server, disabled: true }])
+);
 
 const personaDirs = readdirSync(agentsDir, { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
@@ -60,6 +86,7 @@ for (const dir of personaDirs) {
           // Native tool calls instead of OpenCode's Code Mode wrapper.
           codemode: false,
         },
+        ...disabledServers,
       },
     },
     permissions: [{ action: "*", resource: "*", effect: "allow" }],

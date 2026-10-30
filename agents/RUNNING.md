@@ -90,8 +90,11 @@ bun scripts/write-agent-configs.ts --model opencode/deepseek-v4.1-flash-free
 
 Each `agents/<persona>/opencode.json` points at the same MCP server as its
 `.mcp.json`, loads `CLAUDE.md` as instructions, and exposes MCP tools natively
-(`codemode: false`). The model is baked into the config; override it per run with
-`--model`, or regenerate with a different `--model`.
+(`codemode: false`). Any non-market MCP server in the repo-root `opencode.json`
+(for example a human `rocket` connection) is copied in as `disabled: true`, so a
+persona can only trade through its own token. The model is baked into the
+config; override it per run with `--model`, or regenerate with a different
+`--model`.
 
 Smoke-test one persona:
 

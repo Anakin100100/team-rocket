@@ -1,0 +1,10 @@
+{
+  "mcp": {
+    "servers": {
+      "rocket": {
+        "type": "remote",
+        "url": "https://build-the-arsenal-team-rocket.com/api/mcp"
+      }
+    }
+  }
+}
