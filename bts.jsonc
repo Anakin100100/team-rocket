@@ -1,0 +1,82 @@
+// Better-T-Stack project metadata
+//
+// Keep this file to use the `add` command.
+// Add addons: bunx create-better-t-stack@latest add
+//
+// Docs: https://better-t-stack.dev/docs
+// Stack Builder: https://better-t-stack.dev/new
+
+{
+  "$schema": "https://r2.better-t-stack.dev/schema.json",
+  "version": "3.49.0",
+  "createdAt": "2026-10-30T09:24:20.028Z",
+  "reproducibleCommand": "bun create better-t-stack@latest rocket --frontend tanstack-router --backend hono --runtime node --database postgres --orm drizzle --api orpc --auth better-auth --payments none --addons evlog oxlint skills turborepo ultracite --examples todo --db-setup docker --manual-db --web-deploy vercel --server-deploy vercel --git --package-manager bun --install",
+  "addonOptions": {
+    "skills": {
+      "scope": "project",
+      "agents": ["universal", "claude-code"],
+      "selections": [
+        {
+          "source": "vercel-labs/agent-skills",
+          "skills": [
+            "deploy-to-vercel",
+            "vercel-composition-patterns",
+            "vercel-react-best-practices",
+            "web-design-guidelines",
+          ],
+        },
+        {
+          "source": "better-auth/skills",
+          "skills": [
+            "better-auth-best-practices",
+            "better-auth-security-best-practices",
+            "email-and-password-best-practices",
+          ],
+        },
+        {
+          "source": "honojs/skills",
+          "skills": ["hono"],
+        },
+        {
+          "source": "shadcn/ui",
+          "skills": ["shadcn"],
+        },
+        {
+          "source": "vercel/turborepo",
+          "skills": ["turborepo"],
+        },
+        {
+          "source": "haydenbleasel/ultracite",
+          "skills": ["ultracite"],
+        },
+        {
+          "source": "https://www.evlog.dev",
+          "skills": ["analyze-logs", "build-audit-logs", "review-logging-patterns"],
+        },
+      ],
+    },
+    "ultracite": {
+      "linter": "oxlint",
+      "editors": ["vscode"],
+      "agents": ["universal"],
+      "hooks": ["claude"],
+    },
+  },
+  "dbSetupOptions": {
+    "mode": "manual",
+  },
+  "database": "postgres",
+  "orm": "drizzle",
+  "backend": "hono",
+  "runtime": "node",
+  "frontend": ["tanstack-router"],
+  "addons": ["evlog", "oxlint", "skills", "turborepo", "ultracite"],
+  "examples": ["todo"],
+  "auth": "better-auth",
+  "payments": "none",
+  "packageManager": "bun",
+  "dbSetup": "docker",
+  "api": "orpc",
+  "webDeploy": "vercel",
+  "serverDeploy": "vercel",
+}

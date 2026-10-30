@@ -1,0 +1,35 @@
+{
+  "name": "server",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "tsc -b ../../packages/api && tsdown",
+    "check-types": "tsc -b ../../packages/api && tsc --noEmit",
+    "compile": "bun build --compile --no-compile-autoload-dotenv --minify --sourcemap --bytecode ./src/index.ts --outfile server",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.mjs",
+    "env:generate": "varlock codegen",
+    "auth:generate": "varlock run -- bun x auth@latest generate --config src/services.ts --output ../../packages/db/src/schema/auth.ts --yes"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.1",
+    "@orpc/openapi": "catalog:",
+    "@orpc/server": "catalog:",
+    "@orpc/zod": "catalog:",
+    "@rocket/api": "workspace:*",
+    "@rocket/auth": "workspace:*",
+    "@rocket/db": "workspace:*",
+    "better-auth": "catalog:",
+    "evlog": "^2.33.1",
+    "hono": "^4.13.7",
+    "varlock": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@rocket/config": "workspace:*",
+    "@types/node": "^26.4.1",
+    "tsdown": "^0.23.0",
+    "tsx": "catalog:",
+    "typescript": "catalog:"
+  }
+}

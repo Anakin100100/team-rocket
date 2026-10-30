@@ -1,0 +1,72 @@
+{
+  "name": "rocket",
+  "private": true,
+  "workspaces": {
+    "packages": [
+      "apps/*",
+      "packages/*"
+    ],
+    "catalog": {
+      "zod": "^4.5.4",
+      "typescript": "^6.0.3",
+      "varlock": "1.23.0",
+      "tsx": "^4.23.13",
+      "@orpc/server": "^1.15.6",
+      "@orpc/openapi": "^1.15.6",
+      "@orpc/zod": "^1.15.6",
+      "better-auth": "1.7.12",
+      "next-themes": "^0.4.6",
+      "sonner": "^2.0.8",
+      "@orpc/client": "^1.15.6",
+      "tailwindcss": "^4.3.3",
+      "drizzle-orm": "1.0.0-rc.5",
+      "@types/pg": "^8.23.1"
+    }
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "check-types": "turbo run check-types",
+    "dev:web": "turbo run dev -F web --",
+    "dev:server": "turbo run dev -F server --",
+    "db:push": "turbo run db:push -F @rocket/db --",
+    "db:studio": "turbo run db:studio -F @rocket/db --",
+    "db:generate": "turbo run db:generate -F @rocket/db --",
+    "db:migrate": "turbo run db:migrate -F @rocket/db --",
+    "db:start": "turbo run db:start -F @rocket/db --",
+    "db:watch": "turbo run db:watch -F @rocket/db --",
+    "db:stop": "turbo run db:stop -F @rocket/db --",
+    "db:down": "turbo run db:down -F @rocket/db --",
+    "deploy:setup": "bunx vercel link",
+    "dev:vercel": "bunx vercel dev -L",
+    "env:preview": "tsx scripts/sync-vercel-env.ts preview",
+    "env:production": "tsx scripts/sync-vercel-env.ts production",
+    "deploy": "bunx vercel deploy",
+    "deploy:prod": "bunx vercel deploy --prod",
+    "deploy:check": "bunx vercel deploy --dry",
+    "env:generate": "varlock codegen --path ./apps/web/ && varlock codegen --path ./apps/server/ && varlock codegen --path ./packages/db/",
+    "postinstall": "varlock codegen --path ./apps/web/ && varlock codegen --path ./apps/server/ && varlock codegen --path ./packages/db/",
+    "auth:generate": "cd apps/server && bun run auth:generate",
+    "check": "ultracite check",
+    "fix": "ultracite fix"
+  },
+  "dependencies": {
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@rocket/config": "workspace:*",
+    "@types/node": "^26.4.1",
+    "oxfmt": "^0.71.0",
+    "oxlint": "^1.86.0",
+    "tsx": "catalog:",
+    "turbo": "^2.11.7",
+    "typescript": "catalog:",
+    "ultracite": "8.0.0",
+    "varlock": "catalog:"
+  },
+  "packageManager": "bun@1.4.4",
+  "varlock": {
+    "loadPath": "./apps/server/"
+  }
+}
