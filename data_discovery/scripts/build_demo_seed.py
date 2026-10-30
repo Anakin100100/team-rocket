@@ -354,7 +354,9 @@ def bom_personas(con, lines, awards_by_sid, suppliers):
     """Winners of the BOM notice's other lots that the market would put in a thread on at least one
     line: a class their persona offers in (its top PERSONA_CLASSES by wins) shares the line's CPV
     division (tier 1 or 2, §4.2) and its floor is within the buyer's default walk-away (§4.3).
-    Returns (supplier id, lines it can take, wins in those classes), most wins first."""
+    One selling agent per BOM line, preferring those that can take the most lines, then the most
+    wins, so every line has as many competing sellers as possible.
+    Returns (supplier id, lines it can take, wins in those classes)."""
     winners = [r[0] for r in con.execute(
         "SELECT DISTINCT supplier_id FROM awards WHERE notice_id = ? ORDER BY supplier_id", (BOM_NOTICE,))]
     picked = []
@@ -372,8 +374,8 @@ def bom_personas(con, lines, awards_by_sid, suppliers):
                 wins = max(wins, max(b["wins"] for b in fits))
         if takes:
             picked.append((sid, takes, wins))
-    picked.sort(key=lambda p: (-p[2], p[0]))
-    return picked
+    picked.sort(key=lambda p: (-len(p[1]), -p[2], p[0]))
+    return picked[:len(lines)]
 
 
 def build_listing(t, x, fetched_at):
@@ -573,9 +575,9 @@ def main():
                            "exceeds walk_away_eur. All limits are sealed: stored, enforced, never returned. "
                            "candidates[].price_low/high are legacy band hints; the agent chooses its own ask",
             "bom_rules": f"personas[] with bom_id: suppliers for the lines of {BOM_FILE.name}, lots of "
-                         f"{BOM_NOTICE} that drew no tenders. They are the winners of its other lots whose "
-                         f"persona classes (top {PERSONA_CLASSES} by wins) share a line's CPV division with a "
-                         "floor within the line's walk-away. That notice's awards are restated per lot from "
+                         f"{BOM_NOTICE} that drew no tenders, one per line. They are the winners of its other lots "
+                         f"whose persona classes (top {PERSONA_CLASSES} by wins) share a line's CPV division with "
+                         "a floor within the line's walk-away, those taking the most lines first. That notice's awards are restated per lot from "
                          f"its TED result, PLN at the ECB rate of {fx_date} ({pln_per_eur}) instead of "
                          "market.db's equal split",
         },

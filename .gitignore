@@ -61,3 +61,6 @@ temp
 # Persona tokens written by `bun agents:seed` and the headless opencode configs
 agents/*/.mcp.json
 agents/*/opencode.json
+
+# local scripts with credentials
+*.local.ps1
