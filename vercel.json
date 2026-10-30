@@ -22,7 +22,8 @@
       "buildCommand": "bun run env:generate && bun run check-types",
       "functions": {
         "src/index.ts": {
-          "includeFiles": "{package.json,apps/server/.env.schema,node_modules/.bin/varlock,node_modules/varlock/**}"
+          "includeFiles": "{package.json,apps/server/.env.schema,node_modules/.bin/varlock,node_modules/varlock/**}",
+          "maxDuration": 300
         }
       }
     }

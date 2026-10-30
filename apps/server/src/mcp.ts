@@ -2,10 +2,11 @@ import { requireMcpAuth } from "@better-auth/mcp";
 import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
 import { getMcpResource } from "@rocket/auth";
 import { feedback } from "@rocket/db/schema/feedback";
+import { marketTools, runTool } from "@rocket/market";
 import { z } from "zod";
 
 import { ENV } from "./env.server";
-import { auth, db } from "./services";
+import { auth, db, market } from "./services";
 
 const FEEDBACK_MAX_LENGTH = 5000;
 
@@ -74,6 +75,27 @@ const mcpHandler = createMcpHandler(({ authInfo }) => {
       return textResult("Thanks! Your feedback was sent to the Rocket team.");
     }
   );
+
+  // The marketplace (plan.md §4): the same tools the agents use in-process.
+  // A human in an MCP client can browse the market, act as the buyer or play
+  // any supplier; the market's guards and visibility rules apply unchanged.
+  for (const tool of marketTools) {
+    server.registerTool(
+      tool.name,
+      {
+        title: tool.title,
+        description: tool.description,
+        inputSchema: tool.input,
+        annotations: { readOnlyHint: tool.kind === "read" },
+      },
+      async (args: unknown) => {
+        const outcome = await runTool(market, tool.name, args);
+        return outcome.ok
+          ? textResult(outcome.result)
+          : { ...textResult({ error: outcome.error }), isError: true };
+      }
+    );
+  }
 
   return server;
 });

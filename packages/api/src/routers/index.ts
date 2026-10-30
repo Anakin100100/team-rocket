@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { publicProcedure } from "../index";
 import { feedbackRouter } from "./feedback";
+import { marketRouter } from "./market";
 
 export const appRouter = {
   healthCheck: publicProcedure.output(z.string()).handler(() => "OK"),
@@ -21,6 +22,7 @@ export const appRouter = {
         : false
     ),
   feedback: feedbackRouter,
+  market: marketRouter,
 };
 export type AppRouter = typeof appRouter;
 export type AppRouterClient = RouterClient<typeof appRouter>;
