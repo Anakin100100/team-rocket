@@ -1,0 +1,7 @@
+# Downloaded source data and per-source staging tables: large and regenerable via scripts/fetch_*.py
+data/raw/
+
+__pycache__/
+*.pyc
+.venv/
+.env
