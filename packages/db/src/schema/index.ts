@@ -16,3 +16,4 @@ export {
   user,
   verification,
 } from "./auth";
+export { feedback } from "./feedback";

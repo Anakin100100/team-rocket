@@ -1,9 +1,13 @@
 import { requireMcpAuth } from "@better-auth/mcp";
 import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
 import { getMcpResource } from "@rocket/auth";
+import { feedback } from "@rocket/db/schema/feedback";
+import { z } from "zod";
 
 import { ENV } from "./env.server";
 import { auth, db } from "./services";
+
+const FEEDBACK_MAX_LENGTH = 5000;
 
 const textResult = (value: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
@@ -47,6 +51,27 @@ const mcpHandler = createMcpHandler(({ authInfo }) => {
       return textResult(
         memberships.map(({ role, organization }) => ({ ...organization, role }))
       );
+    }
+  );
+
+  server.registerTool(
+    "send_feedback",
+    {
+      title: "Send feedback",
+      description:
+        "Send feedback, a bug report or a feature request to the Rocket developers.",
+      inputSchema: z.object({
+        feedback: z
+          .string()
+          .trim()
+          .min(1)
+          .max(FEEDBACK_MAX_LENGTH)
+          .describe("The feedback, in the user's own words."),
+      }),
+    },
+    async ({ feedback: text }) => {
+      await db.insert(feedback).values({ userId, text });
+      return textResult("Thanks! Your feedback was sent to the Rocket team.");
     }
   );
 

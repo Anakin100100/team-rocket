@@ -5,9 +5,11 @@ import { mcp } from "@better-auth/mcp";
 import type { Database } from "@rocket/db";
 import * as schema from "@rocket/db/schema/auth";
 import { betterAuth } from "better-auth";
+import { APIError, createAuthMiddleware } from "better-auth/api";
+import { admin } from "better-auth/plugins/admin";
 import { jwt } from "better-auth/plugins/jwt";
 import { organization } from "better-auth/plugins/organization";
-import { eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 
 import {
   createEmailSender,
@@ -51,6 +53,21 @@ export const createAuth = (
     return existing !== undefined;
   };
 
+  const hasPendingInvitation = async (email: string) => {
+    const [pending] = await database
+      .select({ id: schema.invitation.id })
+      .from(schema.invitation)
+      .where(
+        and(
+          eq(schema.invitation.email, email.toLowerCase()),
+          eq(schema.invitation.status, "pending"),
+          gt(schema.invitation.expiresAt, new Date())
+        )
+      )
+      .limit(1);
+    return pending !== undefined;
+  };
+
   // New invitees are sent to sign-up (with their email prefilled) instead of
   // sign-in. Decided here, so the app never exposes an account lookup.
   const invitationUrl = async (invitationId: string, email: string) => {
@@ -75,6 +92,21 @@ export const createAuth = (
       sendResetPassword: ({ user, url }) =>
         sendEmail(resetPasswordEmail(user.email, url)),
     },
+    hooks: {
+      // Accounts are invite-only: self sign-up is open only to emails with a
+      // pending invitation. Server-side creation (admin `createUser`) is unaffected.
+      before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== "/sign-up/email") {
+          return;
+        }
+        const email: unknown = ctx.body?.email;
+        if (typeof email !== "string" || !(await hasPendingInvitation(email))) {
+          throw new APIError("FORBIDDEN", {
+            message: "Sign-up is by invitation only.",
+          });
+        }
+      }),
+    },
     emailVerification: {
       sendOnSignUp: true,
       autoSignInAfterVerification: true,
@@ -94,6 +126,8 @@ export const createAuth = (
       }),
     },
     plugins: [
+      // Server-side user management (e.g. `createUser` for invite-only accounts).
+      admin(),
       organization({
         // Organizations are provisioned by the app (server-side `createOrganization`
         // with a `userId`, which Better Auth treats as a system action), not by users.
@@ -124,9 +158,17 @@ export const createAuth = (
         loginPage: new URL("/auth/sign-in", env.CORS_ORIGIN).href,
         consentPage: new URL("/oauth/consent", env.CORS_ORIGIN).href,
         resource: getMcpResource(env),
+        // Open dynamic registration (RFC 7591) for MCP clients without CIMD
+        // support (e.g. Cursor, Codex). A registered client can't do anything
+        // until an existing user signs in and approves it on the consent page.
+        allowDynamicClientRegistration: true,
+        allowUnauthenticatedClientRegistration: true,
+        // Cursor registers a `cursor://` redirect without `application_type`;
+        // the default ("web") rejects that, so treat such clients as native.
+        clientRegistrationDefaultApplicationType: "infer",
       }),
-      // MCP clients identify themselves with a Client ID Metadata Document URL
-      // instead of registering dynamically.
+      // MCP clients that support it identify themselves with a Client ID
+      // Metadata Document URL instead of registering dynamically.
       cimd({
         fetchClientMetadataResource,
         metadataProfile: "mcp-2026-07-28",

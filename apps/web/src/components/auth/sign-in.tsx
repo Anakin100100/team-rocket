@@ -25,7 +25,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@rocket/ui/components/
 import { Checkbox } from "@rocket/ui/components/checkbox"
 import {
   Field,
-  FieldDescription,
   FieldGroup,
   FieldLabel,
   FieldSeparator
@@ -362,17 +361,7 @@ export function SignIn({
             </Link>
           )}
 
-          {emailAndPassword?.enabled && (
-            <FieldDescription className="text-center">
-              {localization.auth.needToCreateAnAccount}{" "}
-              <Link
-                href={`${basePaths.auth}/${viewPaths.auth.signUp}`}
-                className="underline underline-offset-4"
-              >
-                {localization.auth.signUp}
-              </Link>
-            </FieldDescription>
-          )}
+          {/* Sign-up is invite-only: invitees reach it from their invitation link. */}
         </div>
       </CardContent>
     </Card>

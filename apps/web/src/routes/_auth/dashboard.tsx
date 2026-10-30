@@ -6,14 +6,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@rocket/ui/components/card";
-import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Check, Copy } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { ENV } from "@/env";
-import { getServerUrl, orpc } from "@/utils/orpc";
+import { getServerUrl } from "@/utils/orpc";
 
 const COPIED_RESET_MS = 2000;
 
@@ -60,16 +59,11 @@ const ClaudeCodeSetup = () => {
 const RouteComponent = () => {
   const { session } = Route.useRouteContext();
 
-  const privateData = useQuery(orpc.privateData.queryOptions());
-
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-4 md:p-8">
       <div>
         <h1 className="text-lg font-medium">Dashboard</h1>
         <p>Welcome {session.data?.user.name}</p>
-        <p className="text-muted-foreground text-sm">
-          API: {privateData.data?.message}
-        </p>
       </div>
       <ClaudeCodeSetup />
     </div>

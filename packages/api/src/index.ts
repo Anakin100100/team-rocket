@@ -1,5 +1,6 @@
 import { ORPCError, os } from "@orpc/server";
 
+import { isAppAdmin } from "./admin";
 import type { Context } from "./context";
 
 export const o = os.$context<Context>();
@@ -18,3 +19,18 @@ const requireAuth = o.middleware(({ context, next }) => {
 });
 
 export const protectedProcedure = publicProcedure.use(requireAuth);
+
+// App admins: owners/admins of the ADMIN_ORGANIZATION_SLUG organization.
+export const adminProcedure = protectedProcedure.use(
+  async ({ context, next }) => {
+    const isAdmin = await isAppAdmin(
+      context.db,
+      context.session.user.id,
+      context.adminOrganizationSlug
+    );
+    if (!isAdmin) {
+      throw new ORPCError("FORBIDDEN");
+    }
+    return next();
+  }
+);
