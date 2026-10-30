@@ -11,7 +11,7 @@
     "env:generate": "varlock codegen",
     "auth:generate": "varlock run -- bun x auth@latest generate --config src/services.ts --output ../../packages/db/src/schema/auth.ts --yes",
     "org:create": "varlock run -- tsx scripts/create-organization.ts",
-    "market:round": "varlock run -- tsx scripts/run-round.ts"
+    "agents:seed": "varlock run -- tsx scripts/seed-agents.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",

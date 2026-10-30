@@ -1,75 +1,64 @@
-// The market's contract (plan.md §4): fourteen tools, one module, two
-// transports — called in-process by the agents and exposed over MCP at
-// /api/mcp. Inputs are validated here; guards and visibility live in rfq.ts.
+// The market's contract (plan.md §4.1): eleven tools, exposed at /api/mcp.
+// Identity comes from the connection and is passed in as `actor`; no tool
+// takes "who am I" as an argument.
 import { z } from "zod";
 
-import { MAX_CANDIDATES } from "./constants";
-import type { MarketContext } from "./context";
-import { viewerFromAs } from "./context";
+import { MAX_CITES, MAX_MATCHES, WAIT_MAX_SECONDS } from "./constants";
+import type { Actor, MarketContext } from "./context";
 import { MarketError } from "./errors";
-import { readEvents } from "./events";
 import {
-  matchDemandForSupplier,
-  matchSupplyForCpv,
-  matchSupplyForListing,
+  history,
+  myMarket,
   searchListings,
-} from "./match";
-import { getListing, getSupplier } from "./read";
-import {
-  acceptAward,
-  awardQuote,
-  counterOffer,
-  createRfq,
-  declineAward,
-  declineRfq,
-  getRfqView,
-  needSchema,
-  scoreRfq,
-  submitQuote,
-} from "./rfq";
+  searchSuppliers,
+  whoami,
+} from "./read";
+import { accept, postDemand, postOffer, propose, walkAway } from "./trade";
+import { wait } from "./wait";
 
 const MAX_SEARCH_LIMIT = 50;
-const MAX_SUPPLY_LIMIT = 25;
-const MAX_EVENTS_LIMIT = 500;
-const DEFAULT_EVENTS_LIMIT = 100;
-const DEFAULT_DEMAND_LIMIT = 20;
-const MAX_MESSAGE_LENGTH = 500;
+const DEFAULT_SEARCH_LIMIT = 20;
+const MAX_MESSAGE_LENGTH = 1500;
+const MAX_NOTE_LENGTH = 1000;
 const MAX_REASON_LENGTH = 1000;
+const MAX_LEAD_TIME_DAYS = 3650;
 
-const id = (what: string) => z.string().min(1).describe(what);
-const rfqId = id("RFQ id (from create_rfq or the event feed).");
-const supplierId = id(
-  "Supplier id, e.g. 'POL:6630002096' (from search_supply)."
-);
-const countries = z
-  .array(z.string().length(3))
+const matchId = z
+  .string()
+  .min(1)
+  .describe("Thread id (match_id) from my_market or wait.");
+const country = z
+  .string()
+  .length(3)
   .optional()
-  .describe("ISO 3166-1 alpha-3 country codes, e.g. ['POL', 'FIN'].");
+  .describe("ISO 3166-1 alpha-3 country code, e.g. 'SVK'.");
 const cpvPrefix = z
   .string()
   .regex(/^\d{1,8}$/u)
-  .describe("CPV code or prefix, e.g. '35613' (drones) or '35' (defence).");
-const asParty = z
-  .string()
-  .min(1)
-  .describe(
-    "Who is asking: 'buyer', or a supplier id to see only that supplier's view."
-  );
-const eur = z.number().positive().describe("Amount in EUR.");
-const days = z.number().int().positive().max(3650).describe("Days.");
-const isoDate = z.iso
-  .datetime({ offset: true })
-  .describe("ISO 8601 timestamp, e.g. 2026-10-30T12:00:00Z.");
+  .optional()
+  .describe("CPV code or prefix, e.g. '358' (body armour) or '35' (defence).");
+const priceEur = z.number().positive().describe("Total price in EUR.");
+const leadTimeDays = z
+  .number()
+  .int()
+  .positive()
+  .max(MAX_LEAD_TIME_DAYS)
+  .describe("Delivery time in days from agreement.");
 
-export type ToolKind = "read" | "buyer" | "supplier";
+export type ToolAccess = "any" | "buyer" | "supplier" | "party";
 
 export interface MarketTool<Input extends z.ZodObject = z.ZodObject> {
   name: string;
   title: string;
-  kind: ToolKind;
+  access: ToolAccess;
+  readOnly: boolean;
   description: string;
   input: Input;
-  handler: (ctx: MarketContext, input: z.infer<Input>) => Promise<unknown>;
+  handler: (
+    ctx: MarketContext,
+    actor: Actor,
+    input: z.infer<Input>
+  ) => Promise<unknown>;
 }
 
 const defineTool = <Input extends z.ZodObject>(tool: MarketTool<Input>) =>
@@ -77,299 +66,224 @@ const defineTool = <Input extends z.ZodObject>(tool: MarketTool<Input>) =>
 
 export const marketTools: readonly MarketTool[] = [
   defineTool({
-    name: "search_demand",
-    title: "Search demand",
-    kind: "read",
+    name: "whoami",
+    title: "Who am I",
+    access: "any",
+    readOnly: true,
     description:
-      "Find public tender listings (TED). With supplier_id: listings that supplier could bid on, tiered by how close they are to what it has already won. Otherwise filter by CPV prefix, buyer country and text. Budgets are in EUR.",
+      "Your own record: profile, public stats and award history (with TED URLs), the CPV classes you can offer in (suppliers) or your listings (buyers), your open postings and threads, and the threads where it is your turn.",
+    input: z.object({}),
+    handler: (ctx, actor) => whoami(ctx, actor),
+  }),
+  defineTool({
+    name: "search_listings",
+    title: "Search listings",
+    access: "any",
+    readOnly: true,
+    description:
+      "Open public tender listings (TED) with their published value in EUR, deadline and CPV. Filter by CPV prefix, buyer country or words in the title or need.",
     input: z.object({
-      supplier_id: supplierId.optional(),
-      cpv_prefix: cpvPrefix.optional(),
-      countries: countries.describe("Buyer countries (ISO alpha-3)."),
-      text: z
-        .string()
-        .min(2)
-        .optional()
-        .describe("Words in the title or description (any language)."),
-      open_only: z
-        .boolean()
-        .default(true)
-        .describe("Only listings whose deadline has not passed."),
+      cpv_prefix: cpvPrefix,
+      country: country.describe("Buyer country (ISO alpha-3)."),
+      text: z.string().min(2).optional(),
       limit: z
         .number()
         .int()
         .min(1)
         .max(MAX_SEARCH_LIMIT)
-        .default(DEFAULT_DEMAND_LIMIT),
+        .default(DEFAULT_SEARCH_LIMIT),
     }),
-    handler: (ctx, input) =>
-      input.supplier_id
-        ? matchDemandForSupplier(ctx.db, {
-            supplierId: input.supplier_id,
-            countries: input.countries,
-            openOnly: input.open_only,
-            limit: input.limit,
-          })
-        : searchListings(ctx.db, {
-            cpvPrefix: input.cpv_prefix,
-            countries: input.countries,
-            text: input.text,
-            openOnly: input.open_only,
-            limit: input.limit,
-          }),
-  }),
-  defineTool({
-    name: "search_supply",
-    title: "Search supply",
-    kind: "read",
-    description:
-      "Find real suppliers that have won EU defence/security contracts. With listing_id: tiered candidates for that notice (1 = same CPV class, 2 = same division, 3 = any defence award), filtered by eligibility and budget fit. With cpv_prefix: suppliers that won under that CPV. Includes wins and median award value in the matched CPV.",
-    input: z
-      .object({
-        listing_id: id("Listing id, e.g. 'ted:664115-2026'.").optional(),
-        cpv_prefix: cpvPrefix.optional(),
-        countries: countries.describe("Supplier countries (ISO alpha-3)."),
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(MAX_SUPPLY_LIMIT)
-          .default(MAX_CANDIDATES),
-      })
-      .refine((input) => input.listing_id || input.cpv_prefix, {
-        message: "Pass listing_id or cpv_prefix.",
+    handler: (ctx, _actor, input) =>
+      searchListings(ctx, {
+        cpvPrefix: input.cpv_prefix,
+        country: input.country,
+        text: input.text,
+        limit: input.limit,
       }),
-    handler: (ctx, input) =>
-      input.listing_id
-        ? matchSupplyForListing(ctx.db, {
-            listingId: input.listing_id,
-            countries: input.countries,
-            limit: input.limit,
-          })
-        : matchSupplyForCpv(ctx.db, {
-            cpvPrefix: input.cpv_prefix ?? "",
-            countries: input.countries,
-            limit: input.limit,
-          }),
   }),
   defineTool({
-    name: "get_listing",
-    title: "Get listing",
-    kind: "read",
+    name: "search_suppliers",
+    title: "Search suppliers",
+    access: "any",
+    readOnly: true,
     description:
-      "A tender notice with its buyer and derived fields (open, days to deadline, CPV class, eligibility rule). Title and description are in the original language.",
-    input: z.object({ listing_id: id("Listing id, e.g. 'ted:664115-2026'.") }),
-    handler: (ctx, input) => getListing(ctx, input.listing_id),
-  }),
-  defineTool({
-    name: "get_supplier",
-    title: "Get supplier",
-    kind: "read",
-    description:
-      "A supplier's profile: country, size, award statistics, buyer countries and its most recent public contract awards.",
-    input: z.object({ supplier_id: supplierId }),
-    handler: (ctx, input) => getSupplier(ctx, input.supplier_id),
-  }),
-  defineTool({
-    name: "get_rfq",
-    title: "Get RFQ",
-    kind: "read",
-    description:
-      "An RFQ's state, need and deadlines. As 'buyer': every candidate, quote, score and rank (never a supplier's floor). As a supplier id: only that supplier's own price band, status, quotes, rank, counter and the number of bidders.",
-    input: z.object({ rfq_id: rfqId, as: asParty }),
-    handler: (ctx, input) =>
-      getRfqView(ctx, { rfqId: input.rfq_id, viewer: viewerFromAs(input.as) }),
-  }),
-  defineTool({
-    name: "get_events",
-    title: "Get events",
-    kind: "read",
-    description:
-      "The market's append-only event log after cursor `since`, filtered by the same visibility as get_rfq. Returns the events and the new cursor to pass next time.",
+      "Real suppliers that won EU defence and security contracts, with public stats and what they won per CPV class (wins, median award). Filter by CPV prefix and country.",
     input: z.object({
-      rfq_id: rfqId.optional(),
+      cpv_prefix: cpvPrefix,
+      country: country.describe("Supplier country (ISO alpha-3)."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_SEARCH_LIMIT)
+        .default(DEFAULT_SEARCH_LIMIT),
+    }),
+    handler: (ctx, _actor, input) =>
+      searchSuppliers(ctx, {
+        cpvPrefix: input.cpv_prefix,
+        country: input.country,
+        limit: input.limit,
+      }),
+  }),
+  defineTool({
+    name: "history",
+    title: "Award history",
+    access: "any",
+    readOnly: true,
+    description:
+      "Public award records of a buyer or a supplier: who bought what from whom, for how much, against how many bidders, with the TED notice URL. Cite these URLs in your messages.",
+    input: z.object({
+      entity_id: z
+        .string()
+        .min(1)
+        .describe(
+          "Buyer id (e.g. 'ted-buyer:00212008') or supplier id (e.g. 'ESP:28030062')."
+        ),
+    }),
+    handler: (ctx, _actor, input) => history(ctx, input.entity_id),
+  }),
+  defineTool({
+    name: "my_market",
+    title: "My market",
+    access: "any",
+    readOnly: true,
+    description:
+      "Your demands or offers and every thread you are a party to: the counterparty, all proposals with messages and citations, whose turn it is and how many proposals each side has left.",
+    input: z.object({}),
+    handler: (ctx, actor) => myMarket(ctx, actor),
+  }),
+  defineTool({
+    name: "wait",
+    title: "Wait for news",
+    access: "any",
+    readOnly: true,
+    description: `Your clock. Blocks up to ${WAIT_MAX_SECONDS} s until something addressed to you happens (a match opens, the other side proposes, accepts or walks away, a thread is superseded), then returns those events and a new cursor. Pass the cursor back as \`since\` next time.`,
+    input: z.object({
       since: z
         .number()
         .int()
         .min(0)
         .default(0)
         .describe("Cursor: the last event id you have seen."),
-      as: asParty,
-      limit: z
+      timeout_s: z
         .number()
         .int()
         .min(1)
-        .max(MAX_EVENTS_LIMIT)
-        .default(DEFAULT_EVENTS_LIMIT),
+        .max(WAIT_MAX_SECONDS)
+        .default(WAIT_MAX_SECONDS),
     }),
-    handler: (ctx, input) =>
-      readEvents(ctx.db, {
-        rfqId: input.rfq_id,
-        since: input.since,
-        viewer: viewerFromAs(input.as),
-        limit: input.limit,
-      }),
+    handler: (ctx, actor, input) =>
+      wait(ctx, actor, { since: input.since, timeoutSeconds: input.timeout_s }),
   }),
   defineTool({
-    name: "create_rfq",
-    title: "Create RFQ",
-    kind: "buyer",
-    description:
-      "Buyer: turn an open listing into a request for quotes. The market invites up to six tiered candidates and gives each its own price band and floor (private to that supplier). State QUOTING, or FAILED when no supplier matches.",
+    name: "post_demand",
+    title: "Post demand",
+    access: "buyer",
+    readOnly: false,
+    description: `Buyer: put one of your open listings on the market, with the need written in English. The market matches it against open offers right away and opens up to ${MAX_MATCHES} private threads, each starting with that supplier's public ask; you are on turn in each.`,
     input: z.object({
-      listing_id: id("Listing id, e.g. 'ted:664115-2026'."),
-      need: needSchema,
-      quoting_deadline: isoDate
+      listing_id: z
+        .string()
+        .min(1)
+        .describe("One of your listings (see whoami)."),
+      need: z
+        .string()
+        .min(1)
+        .max(MAX_NOTE_LENGTH)
         .optional()
-        .describe("When quoting closes; default 45 seconds from now."),
+        .describe(
+          "What you are buying, in English. Defaults to the listing's need."
+        ),
     }),
-    handler: (ctx, input) =>
-      createRfq(ctx, {
-        listingId: input.listing_id,
-        need: input.need,
-        quotingDeadline: input.quoting_deadline
-          ? new Date(input.quoting_deadline)
-          : undefined,
+    handler: (ctx, actor, input) =>
+      postDemand(ctx, actor, { listingId: input.listing_id, need: input.need }),
+  }),
+  defineTool({
+    name: "post_offer",
+    title: "Post offer",
+    access: "supplier",
+    readOnly: false,
+    description: `Supplier: offer what you supply in one CPV class you have won in (see whoami), with your public ask, lead time and a note buyers will read. The market matches it against open demands right away and opens up to ${MAX_MATCHES} private threads. One open offer per class.`,
+    input: z.object({
+      cpv_class: z
+        .string()
+        .regex(/^\d{3}$/u)
+        .describe("3-digit CPV class, e.g. '358'."),
+      ask_eur: priceEur.describe(
+        "Your public asking price in EUR for a typical contract."
+      ),
+      lead_time_days: leadTimeDays,
+      note: z
+        .string()
+        .min(1)
+        .max(MAX_NOTE_LENGTH)
+        .describe("Why buy from you, in one or two sentences."),
+    }),
+    handler: (ctx, actor, input) =>
+      postOffer(ctx, actor, {
+        cpvClass: input.cpv_class,
+        askEur: input.ask_eur,
+        leadTimeDays: input.lead_time_days,
+        note: input.note,
       }),
   }),
   defineTool({
-    name: "score_quotes",
-    title: "Score quotes",
-    kind: "buyer",
+    name: "propose",
+    title: "Propose",
+    access: "party",
+    readOnly: false,
     description:
-      "Buyer: rank the current quotes (price 60, lead time 25, track record 15) and move to EVALUATING. Allowed in QUOTING once every candidate answered or the quoting deadline passed, and in NEGOTIATING once every countered supplier answered or the negotiation deadline passed. FAILED if there are no quotes, or nothing fits the budget tolerance after negotiation.",
-    input: z.object({ rfq_id: rfqId }),
-    handler: (ctx, input) => scoreRfq(ctx, input.rfq_id),
-  }),
-  defineTool({
-    name: "counter",
-    title: "Counter a quote",
-    kind: "buyer",
-    description:
-      "Buyer: send one supplier a private counter (price and/or lead time, with a one-line message). Price must be 85–100 % of that supplier's own quote. Once per supplier, only in the single negotiation round: the first counter moves EVALUATING to NEGOTIATING (needs ≥ 2 quotes) and sets the negotiation deadline (default 30 s).",
+      "Make a new standing proposal in a thread where it is your turn. You can only concede against your own last proposal (buyers up, suppliers down), at most 3 proposals per side. A price beyond your sealed limit is refused as 'outside your limit'. Cite public award URLs that support your price.",
     input: z.object({
-      rfq_id: rfqId,
-      supplier_id: supplierId,
-      price_eur: eur,
-      lead_time_days: days,
+      match_id: matchId,
+      price_eur: priceEur,
+      lead_time_days: leadTimeDays,
       message: z
         .string()
         .min(1)
         .max(MAX_MESSAGE_LENGTH)
-        .describe("One line to the supplier."),
-      negotiation_deadline: isoDate.optional(),
+        .describe("Your argument, to the other side."),
+      cites: z
+        .array(z.url())
+        .max(MAX_CITES)
+        .default([])
+        .describe(
+          "TED notice URLs backing your argument (from whoami or history)."
+        ),
     }),
-    handler: (ctx, input) =>
-      counterOffer(ctx, {
-        rfqId: input.rfq_id,
-        supplierId: input.supplier_id,
+    handler: (ctx, actor, input) =>
+      propose(ctx, actor, {
+        matchId: input.match_id,
         priceEur: input.price_eur,
         leadTimeDays: input.lead_time_days,
         message: input.message,
-        negotiationDeadline: input.negotiation_deadline
-          ? new Date(input.negotiation_deadline)
-          : undefined,
+        cites: input.cites,
       }),
   }),
   defineTool({
-    name: "award",
-    title: "Award",
-    kind: "buyer",
+    name: "accept",
+    title: "Accept",
+    access: "party",
+    readOnly: false,
     description:
-      "Buyer: award a scored quote (state AWARDED). Needs EVALUATING. Price must be within budget, or within the tolerance (+10 %) with a justification. Awarding anything but rank 1 also needs a justification.",
-    input: z.object({
-      rfq_id: rfqId,
-      quote_id: id("Quote id from get_rfq or score_quotes."),
-      justification: z.string().max(MAX_REASON_LENGTH).optional(),
-    }),
-    handler: (ctx, input) =>
-      awardQuote(ctx, {
-        rfqId: input.rfq_id,
-        quoteId: input.quote_id,
-        justification: input.justification,
-      }),
+      "Sign the other side's standing proposal as it is. That is the contract: the thread is agreed, the demand and the offer are filled, and every other open thread on them is superseded.",
+    input: z.object({ match_id: matchId }),
+    handler: (ctx, actor, input) =>
+      accept(ctx, actor, { matchId: input.match_id }),
   }),
   defineTool({
-    name: "submit_quote",
-    title: "Submit quote",
-    kind: "supplier",
+    name: "walk_away",
+    title: "Walk away",
+    access: "party",
+    readOnly: false,
     description:
-      "Supplier: quote on an RFQ you are invited to. final=false in QUOTING (before the quoting deadline); final=true answers a counter in NEGOTIATING (accept it, improve, or resubmit your first quote to hold). Never below your floor; a final quote cannot exceed your first.",
+      "End a thread, with a reason the other side reads (capacity, impossible lead time, price, silence).",
     input: z.object({
-      rfq_id: rfqId,
-      supplier_id: supplierId,
-      price_eur: eur,
-      lead_time_days: days,
-      note: z
-        .string()
-        .max(MAX_REASON_LENGTH)
-        .optional()
-        .describe("Your reasoning, visible to the buyer."),
-      final: z.boolean().default(false),
-    }),
-    handler: (ctx, input) =>
-      submitQuote(ctx, {
-        rfqId: input.rfq_id,
-        supplierId: input.supplier_id,
-        priceEur: input.price_eur,
-        leadTimeDays: input.lead_time_days,
-        note: input.note,
-        final: input.final,
-      }),
-  }),
-  defineTool({
-    name: "decline",
-    title: "Decline RFQ",
-    kind: "supplier",
-    description:
-      "Supplier: decline an invitation in QUOTING, with a reason the buyer sees (e.g. capacity, out of scope, price).",
-    input: z.object({
-      rfq_id: rfqId,
-      supplier_id: supplierId,
+      match_id: matchId,
       reason: z.string().min(1).max(MAX_REASON_LENGTH),
     }),
-    handler: (ctx, input) =>
-      declineRfq(ctx, {
-        rfqId: input.rfq_id,
-        supplierId: input.supplier_id,
-        reason: input.reason,
-      }),
-  }),
-  defineTool({
-    name: "accept_award",
-    title: "Accept award",
-    kind: "supplier",
-    description:
-      "Awarded supplier: accept the award. Writes the deal with a contract summary and closes the RFQ (CLOSED).",
-    input: z.object({
-      rfq_id: rfqId,
-      supplier_id: supplierId,
-      contract_summary: z.string().max(MAX_REASON_LENGTH).optional(),
-    }),
-    handler: (ctx, input) =>
-      acceptAward(ctx, {
-        rfqId: input.rfq_id,
-        supplierId: input.supplier_id,
-        contractSummary: input.contract_summary,
-      }),
-  }),
-  defineTool({
-    name: "decline_award",
-    title: "Decline award",
-    kind: "supplier",
-    description:
-      "Awarded supplier: decline the award, with a reason. The RFQ fails (FAILED).",
-    input: z.object({
-      rfq_id: rfqId,
-      supplier_id: supplierId,
-      reason: z.string().min(1).max(MAX_REASON_LENGTH),
-    }),
-    handler: (ctx, input) =>
-      declineAward(ctx, {
-        rfqId: input.rfq_id,
-        supplierId: input.supplier_id,
-        reason: input.reason,
-      }),
+    handler: (ctx, actor, input) =>
+      walkAway(ctx, actor, { matchId: input.match_id, reason: input.reason }),
   }),
 ];
 
@@ -381,10 +295,11 @@ export type ToolOutcome =
   | { ok: true; result: unknown }
   | { ok: false; error: { code: string; message: string } };
 
-// Validate and run one tool. Market refusals and bad input come back as data
-// so an agent (or MCP client) can read them and correct course.
+// Validate and run one tool as `actor`. Refusals come back as data so the
+// agent can read the reason and adjust.
 export const runTool = async (
   ctx: MarketContext,
+  actor: Actor,
   name: string,
   rawInput: unknown
 ): Promise<ToolOutcome> => {
@@ -403,7 +318,7 @@ export const runTool = async (
     };
   }
   try {
-    return { ok: true, result: await tool.handler(ctx, parsed.data) };
+    return { ok: true, result: await tool.handler(ctx, actor, parsed.data) };
   } catch (error) {
     if (error instanceof MarketError) {
       return { ok: false, error: { code: error.code, message: error.message } };

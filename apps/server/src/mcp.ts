@@ -1,40 +1,37 @@
+import { createHash } from "node:crypto";
+
 import { requireMcpAuth } from "@better-auth/mcp";
 import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
 import { getMcpResource } from "@rocket/auth";
 import { feedback } from "@rocket/db/schema/feedback";
+import { marketAgents } from "@rocket/db/schema/market";
 import { marketTools, runTool } from "@rocket/market";
+import type { Actor } from "@rocket/market";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { ENV } from "./env.server";
 import { auth, db, market } from "./services";
 
 const FEEDBACK_MAX_LENGTH = 5000;
+const BEARER_PREFIX = "bearer ";
 
 const textResult = (value: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
 });
 
-const mcpHandler = createMcpHandler(({ authInfo }) => {
-  // `requireMcpAuth` verified the token; its subject is the signed-in user.
-  const userId = String(authInfo?.extra?.userId ?? "");
-  const server = new McpServer({ name: "rocket", version: "1.0.0" });
+const hashToken = (token: string) =>
+  createHash("sha256").update(token).digest("hex");
 
-  server.registerTool(
-    "whoami",
-    {
-      title: "Who am I",
-      description: "The Rocket user this MCP connection is signed in as.",
-      annotations: { readOnlyHint: true },
-    },
-    async () => {
-      const user = await db.query.user.findFirst({
-        where: { id: userId },
-        columns: { id: true, name: true, email: true },
-      });
-      return textResult(user ?? null);
-    }
-  );
+const bearerToken = (request: Request) => {
+  const header = request.headers.get("authorization") ?? "";
+  return header.toLowerCase().startsWith(BEARER_PREFIX)
+    ? header.slice(BEARER_PREFIX.length).trim()
+    : "";
+};
 
+// Tools only signed-in humans get; persona agents see exactly the market.
+const registerHumanTools = (server: McpServer, userId: string) => {
   server.registerTool(
     "list_organizations",
     {
@@ -75,10 +72,15 @@ const mcpHandler = createMcpHandler(({ authInfo }) => {
       return textResult("Thanks! Your feedback was sent to the Rocket team.");
     }
   );
+};
 
-  // The marketplace (plan.md §4): the same tools the agents use in-process.
-  // A human in an MCP client can browse the market, act as the buyer or play
-  // any supplier; the market's guards and visibility rules apply unchanged.
+const mcpHandler = createMcpHandler(({ authInfo }) => {
+  const actor = authInfo?.extra?.actor as Actor;
+  const userId = authInfo?.extra?.userId as string | undefined;
+  const server = new McpServer({ name: "market", version: "1.0.0" });
+
+  // The marketplace (plan.md §4.1): eleven tools, acting as the connection's
+  // actor. Guards and visibility are enforced in the tools, not here.
   for (const tool of marketTools) {
     server.registerTool(
       tool.name,
@@ -86,31 +88,76 @@ const mcpHandler = createMcpHandler(({ authInfo }) => {
         title: tool.title,
         description: tool.description,
         inputSchema: tool.input,
-        annotations: { readOnlyHint: tool.kind === "read" },
+        annotations: { readOnlyHint: tool.readOnly },
       },
       async (args: unknown) => {
-        const outcome = await runTool(market, tool.name, args);
+        const outcome = await runTool(market, actor, tool.name, args);
         return outcome.ok
           ? textResult(outcome.result)
           : { ...textResult({ error: outcome.error }), isError: true };
       }
     );
   }
-
+  if (userId) {
+    registerHumanTools(server, userId);
+  }
   return server;
 });
 
-export const handleMcpRequest = requireMcpAuth(
+// A signed-in human (OAuth) watches the market as an observer.
+const handleHumanRequest = requireMcpAuth(
   auth,
-  (request, claims) =>
-    mcpHandler.fetch(request, {
+  async (request, claims) => {
+    const userId = String(claims.sub ?? "");
+    const user = await db.query.user.findFirst({
+      where: { id: userId },
+      columns: { name: true },
+    });
+    const actor: Actor = {
+      kind: "observer",
+      entityId: null,
+      name: user?.name ?? "observer",
+    };
+    return mcpHandler.fetch(request, {
       authInfo: {
-        token: request.headers.get("authorization")?.split(" ")[1] ?? "",
+        token: bearerToken(request),
         clientId: String(claims.azp ?? ""),
         scopes: typeof claims.scope === "string" ? claims.scope.split(" ") : [],
         expiresAt: claims.exp,
-        extra: { userId: claims.sub },
+        extra: { actor, userId },
       },
-    }),
+    });
+  },
   { resource: getMcpResource(ENV) }
 );
+
+// The persona door (plan.md §5.1): a bearer token whose hash is in
+// `market_agents` runs as that buyer or supplier. Anything else goes through
+// the OAuth door.
+export const handleMcpRequest = async (request: Request) => {
+  const token = bearerToken(request);
+  if (token) {
+    const tokenHash = hashToken(token);
+    const [agent] = await db
+      .select()
+      .from(marketAgents)
+      .where(eq(marketAgents.tokenHash, tokenHash));
+    if (agent) {
+      const actor: Actor = {
+        kind: agent.kind as Actor["kind"],
+        entityId: agent.entityId,
+        name: agent.name,
+        tokenHash,
+      };
+      return mcpHandler.fetch(request, {
+        authInfo: {
+          token,
+          clientId: "market-persona",
+          scopes: [],
+          extra: { actor },
+        },
+      });
+    }
+  }
+  return handleHumanRequest(request);
+};

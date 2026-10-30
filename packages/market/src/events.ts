@@ -1,82 +1,85 @@
-import { events } from "@rocket/db/schema/market";
-import { and, asc, eq, gt, or, sql } from "drizzle-orm";
-import type { SQL } from "drizzle-orm";
+// The append-only event log: the only integration point (plan.md §3, §6).
+// An event names the buyer and/or supplier it concerns; a party sees only the
+// events that name it, observers see all of them and their sealed values.
+import { marketEvents } from "@rocket/db/schema/market";
+import { and, asc, eq, gt, ne } from "drizzle-orm";
 
-import type { RfqState } from "./constants";
-import type { Executor, Viewer } from "./context";
-
-export type EventAudience = "public" | "buyer" | "private";
+import type { Actor, Executor } from "./context";
+import { actorLabel } from "./context";
 
 export interface NewEvent {
-  rfqId: string | null;
   actor: string;
   action: string;
-  audience: EventAudience;
+  matchId?: string | null;
+  demandId?: string | null;
+  offerId?: string | null;
+  buyerId?: string | null;
   supplierId?: string | null;
-  payload?: Record<string, unknown>;
-  stateBefore?: RfqState | null;
-  stateAfter?: RfqState | null;
+  payload: Record<string, unknown>;
+  sealed?: Record<string, unknown> | null;
 }
 
 export const appendEvent = async (executor: Executor, event: NewEvent) => {
   const [row] = await executor
-    .insert(events)
+    .insert(marketEvents)
     .values({
-      rfqId: event.rfqId,
       actor: event.actor,
       action: event.action,
-      audience: event.audience,
+      matchId: event.matchId ?? null,
+      demandId: event.demandId ?? null,
+      offerId: event.offerId ?? null,
+      buyerId: event.buyerId ?? null,
       supplierId: event.supplierId ?? null,
-      payload: event.payload ?? {},
-      stateBefore: event.stateBefore ?? null,
-      stateAfter: event.stateAfter ?? null,
+      payload: event.payload,
+      sealed: event.sealed ?? null,
     })
-    .returning({ id: events.id });
+    .returning({ id: marketEvents.id });
   return row?.id;
 };
 
-const visibleTo = (viewer: Viewer): SQL | undefined => {
-  if (viewer.role === "observer") {
-    return undefined;
-  }
-  if (viewer.role === "buyer") {
-    return or(eq(events.audience, "public"), eq(events.audience, "buyer"));
-  }
-  return or(
-    eq(events.audience, "public"),
-    eq(events.supplierId, viewer.supplierId)
-  );
-};
+type EventRow = typeof marketEvents.$inferSelect;
 
-export const readEvents = async (
+const present = (row: EventRow, withSealed: boolean) => ({
+  id: row.id,
+  ts: row.ts.toISOString(),
+  actor: row.actor,
+  action: row.action,
+  match_id: row.matchId,
+  demand_id: row.demandId,
+  offer_id: row.offerId,
+  buyer_id: row.buyerId,
+  supplier_id: row.supplierId,
+  payload: row.payload,
+  ...(withSealed ? { sealed: row.sealed } : {}),
+});
+
+// Events addressed to a party since the cursor, excluding its own actions.
+export const eventsFor = async (
   executor: Executor,
-  {
-    rfqId,
-    since,
-    viewer,
-    limit,
-  }: { rfqId?: string; since: number; viewer: Viewer; limit: number }
+  actor: Actor,
+  { since, limit }: { since: number; limit: number }
 ) => {
+  const observer = actor.kind === "observer";
+  let addressed;
+  if (actor.kind === "buyer") {
+    addressed = eq(marketEvents.buyerId, actor.entityId ?? "");
+  } else if (actor.kind === "supplier") {
+    addressed = eq(marketEvents.supplierId, actor.entityId ?? "");
+  }
   const rows = await executor
     .select()
-    .from(events)
+    .from(marketEvents)
     .where(
       and(
-        gt(events.id, since),
-        rfqId ? eq(events.rfqId, rfqId) : undefined,
-        visibleTo(viewer)
+        gt(marketEvents.id, since),
+        addressed,
+        observer ? undefined : ne(marketEvents.actor, actorLabel(actor))
       )
     )
-    .orderBy(asc(events.id))
+    .orderBy(asc(marketEvents.id))
     .limit(limit);
-  const cursor = rows.at(-1)?.id ?? since;
-  return { events: rows, cursor };
-};
-
-export const latestEventId = async (executor: Executor, rfqId: string) => {
-  const [row] = await executor
-    .select({ id: sql<number>`coalesce(max(${events.id}), 0)::bigint` })
-    .from(events)
-    .where(eq(events.rfqId, rfqId));
-  return Number(row?.id ?? 0);
+  return {
+    events: rows.map((row) => present(row, observer)),
+    cursor: rows.at(-1)?.id ?? since,
+  };
 };

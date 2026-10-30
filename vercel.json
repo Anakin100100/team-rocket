@@ -23,7 +23,7 @@
       "functions": {
         "src/index.ts": {
           "includeFiles": "{package.json,apps/server/.env.schema,node_modules/.bin/varlock,node_modules/varlock/**}",
-          "maxDuration": 300
+          "maxDuration": 60
         }
       }
     }

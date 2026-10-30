@@ -1,28 +1,9 @@
-// Fixed market rules (plan.md §5–6). Code decides bounds; agents decide within them.
+// Fixed market rules (plan.md §4). Code decides bounds; agents decide within them.
 
-export const RFQ_STATES = [
-  "QUOTING",
-  "EVALUATING",
-  "NEGOTIATING",
-  "AWARDED",
-  "CLOSED",
-  "FAILED",
-] as const;
-export type RfqState = (typeof RFQ_STATES)[number];
-export const TERMINAL_STATES: ReadonlySet<RfqState> = new Set([
-  "CLOSED",
-  "FAILED",
-]);
-
-export type CandidateStatus =
-  | "invited"
-  | "quoted"
-  | "declined"
-  | "countered"
-  | "final"
-  | "awarded"
-  | "accepted"
-  | "declined_award";
+export type Side = "buyer" | "supplier";
+export type ActorKind = Side | "observer";
+export type PostingState = "open" | "filled" | "withdrawn";
+export type MatchState = "open" | "agreed" | "abandoned" | "superseded";
 
 // ISO 3166-1 alpha-3, as used by TED.
 export const EU_EEA_COUNTRIES = [
@@ -92,26 +73,18 @@ export const NATO_COUNTRIES = [
   "USA",
 ];
 
-export const MAX_CANDIDATES = 6;
-// Supply is restricted to suppliers with at least one defence/security award
-// (CPV division 35), which also stands in for the clearance requirement.
 export const DEFENCE_DIVISION = "35";
-export const BUDGET_MATCH_RANGE = { min: 0.2, max: 5 } as const;
+// Matches opened per posting (plan.md §4.2).
+export const MAX_MATCHES = 6;
+// Buyer walk-away = published value × this, when the listing has none sealed.
+export const WALK_AWAY_FACTOR = 1.1;
+// Thread floor = max(offer floor, this × the demand's published value).
+export const THREAD_FLOOR_ANCHOR = 0.6;
+// Proposals per side in one thread (the supplier's opening ask counts).
+export const MAX_PROPOSALS_PER_SIDE = 3;
+// The one message both sides get when they overstep their own sealed limit.
+export const OUTSIDE_LIMIT = "outside your limit";
 
-export const DEFAULT_BUDGET_TOLERANCE = 1.1;
-export const DEFAULT_QUOTING_WINDOW_SECONDS = 45;
-export const DEFAULT_NEGOTIATION_WINDOW_SECONDS = 30;
-export const DEFAULT_REQUIRED_DELIVERY_DAYS = 90;
-
-export const COUNTER_PRICE_BOUNDS = { min: 0.85, max: 1 } as const;
-export const MIN_QUOTES_TO_NEGOTIATE = 2;
-// Open deals in the matched CPV above which a supplier should decline (capacity).
-export const CAPACITY_LIMIT = 2;
-
-export const SCORE_WEIGHTS = {
-  price: 60,
-  leadTime: 25,
-  trackRecord: 15,
-} as const;
-// Wins at which the track-record part maxes out (log scaled).
-export const TRACK_RECORD_CAP_WINS = 10;
+export const WAIT_MAX_SECONDS = 20;
+export const WAIT_POLL_MS = 1000;
+export const MAX_CITES = 5;

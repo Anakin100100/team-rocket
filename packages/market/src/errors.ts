@@ -1,5 +1,5 @@
 // A refused market action. Agents and MCP clients get `code` and `message`
-// back as data, so they can correct course instead of crashing a round.
+// back as data, so they can correct course instead of failing.
 export type MarketErrorCode =
   | "NOT_FOUND"
   | "GUARD_FAILED"
@@ -21,3 +21,6 @@ export const guardFailed = (message: string) =>
 
 export const notFound = (message: string) =>
   new MarketError("NOT_FOUND", message);
+
+export const forbidden = (message: string) =>
+  new MarketError("FORBIDDEN", message);

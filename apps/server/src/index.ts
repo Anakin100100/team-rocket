@@ -6,10 +6,9 @@ import { RPCHandler } from "@orpc/server/fetch";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { appRouter } from "@rocket/api/routers/index";
 import { isAppAdmin } from "@rocket/auth/admin";
-import { rfqs } from "@rocket/db/schema/market";
-import { MarketError, runRound } from "@rocket/market";
+import { eventsFor } from "@rocket/market";
+import type { Actor } from "@rocket/market";
 import { isAPIError } from "better-auth/api";
-import { eq } from "drizzle-orm";
 import { initLogger } from "evlog";
 import { createAuthMiddleware } from "evlog/better-auth";
 import type { BetterAuthInstance } from "evlog/better-auth";
@@ -18,13 +17,12 @@ import { evlog } from "evlog/hono";
 import type { EvlogVariables } from "evlog/hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 import { createContext } from "./context";
 import { ENV } from "./env.server";
 import { handleMcpRequest } from "./mcp";
-import { agents, auth, db, market } from "./services";
+import { auth, db } from "./services";
 
 initLogger({
   env: { service: "rocket-server" },
@@ -34,6 +32,8 @@ const identifyUser = createAuthMiddleware(auth as BetterAuthInstance, {
   exclude: ["/api/auth/**"],
   maskEmail: true,
 });
+
+const OBSERVER: Actor = { kind: "observer", entityId: null, name: "admin-ui" };
 
 const app = new Hono<EvlogVariables>();
 
@@ -63,55 +63,20 @@ app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.on(["GET", "HEAD"], "/.well-known/*", (c) => auth.handler(c.req.raw));
 app.all("/api/mcp", (c) => handleMcpRequest(c.req.raw));
 
-// Each round can call the model many times; cap concurrent rounds (public route).
-const MAX_CONCURRENT_ROUNDS = 3;
+const MAX_EVENTS_PAGE = 500;
 
-// One negotiation round, streamed as server-sent events (plan.md §3.1). The
-// request is the compute context the agents live in; if it ends early, running
-// the same RFQ again resumes from the database.
-app.post("/api/rfq/:id/run", async (c) => {
-  const rfqId = c.req.param("id");
-  const since = Number(c.req.query("since") ?? 0) || 0;
-  const running = await db.$count(rfqs, eq(rfqs.running, true));
-  if (running >= MAX_CONCURRENT_ROUNDS) {
-    return c.json(
-      { message: "Too many rounds are running; try again shortly." },
-      429
-    );
-  }
-  const round = runRound(agents, market, rfqId, {
-    budgetMs: ENV.ROUND_BUDGET_MS,
-    since,
-    signal: c.req.raw.signal,
-  });
-  // Starting the round takes the RFQ's `running` flag; refuse before streaming.
-  let first: Awaited<ReturnType<typeof round.next>>;
-  try {
-    first = await round.next();
-  } catch (error) {
-    if (error instanceof MarketError) {
-      return c.json(
-        { message: error.message },
-        error.code === "NOT_FOUND" ? 404 : 409
-      );
-    }
-    throw error;
-  }
-  return streamSSE(c, async (stream) => {
-    const send = (event: { id: number }) =>
-      stream.writeSSE({
-        event: "market",
-        id: String(event.id),
-        data: JSON.stringify(event),
-      });
-    if (!first.done) {
-      await send(first.value);
-    }
-    for await (const event of round) {
-      await send(event);
-    }
-    await stream.writeSSE({ event: "done", data: "{}" });
-  });
+// The admin UI's only input (plan.md §6): every market event after the cursor,
+// with sealed limits. Read only and public, like the rest of the demo path.
+app.get("/api/events", async (c) => {
+  const since = Math.max(0, Number(c.req.query("since") ?? 0) || 0);
+  const limit = Math.min(
+    MAX_EVENTS_PAGE,
+    Math.max(
+      1,
+      Number(c.req.query("limit") ?? MAX_EVENTS_PAGE) || MAX_EVENTS_PAGE
+    )
+  );
+  return c.json(await eventsFor(db, OBSERVER, { since, limit }));
 });
 
 const API_REFERENCE_PREFIX = "/api/api-reference";

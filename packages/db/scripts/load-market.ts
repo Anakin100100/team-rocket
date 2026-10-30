@@ -1,26 +1,97 @@
-// Load the committed TED snapshot (data_discovery/data/processed/market.db)
-// into Postgres: raw tables verbatim, then entity tables and the
-// `supplier_stats` view built on top with SQL (plan.md §2.2).
+// Load the demo seed (data_discovery/data/processed/demo_seed.json, built by
+// data_discovery/scripts/build_demo_seed.py) into Postgres: buyers, suppliers,
+// their per-class offer basis, listings and public awards (plan.md §2.2–2.3).
 //
 // Usage (from packages/db): bun run market:load
-// Re-runnable: raw tables are replaced, entities are upserted so existing RFQs,
-// quotes and deals keep their references.
-import { Database } from "bun:sqlite";
-import { statSync } from "node:fs";
+// Re-runnable: everything is upserted, awards are replaced; market-side rows
+// (demands, offers, matches, events) are left alone.
+//
+// Every write runs in one transaction on one connection, so the loops await
+// each statement in turn.
+/* oxlint-disable no-await-in-loop */
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import "varlock/auto-load";
 import { Pool } from "pg";
 
-const MARKET_DB = path.resolve(
+const SEED = path.resolve(
   import.meta.dirname,
-  "../../../data_discovery/data/processed/market.db"
+  "../../../data_discovery/data/processed/demo_seed.json"
 );
-const BATCH_SIZE = 1000;
+const TIMEZONE_SUFFIX = /[zZ]|[+-]\d\d:?\d\d$/u;
 
-// Military notices fall under the defence directive, which lets buyers limit
-// bidding to EU/EEA suppliers; everything else is open to any supplier.
-const ELIGIBILITY_SQL = `case when t.segment = 'military' then 'eu' else 'any' end`;
+interface SeedAward {
+  external_id: string;
+  url?: string | null;
+  buyer_name?: string | null;
+  buyer_country?: string | null;
+  supplier_id?: string | null;
+  supplier_name?: string | null;
+  supplier_country?: string | null;
+  cpv?: string | null;
+  value_eur?: number | null;
+  tenders_received?: number | null;
+  award_date?: string | null;
+  title?: string | null;
+}
+
+interface Seed {
+  meta: { ted_fetched_at: string };
+  buyers: {
+    id: string;
+    name: string;
+    country: string;
+    city: string | null;
+    legal_type: string | null;
+    stats: unknown;
+    awards: SeedAward[];
+  }[];
+  suppliers: {
+    id: string;
+    name: string;
+    country: string;
+    city: string | null;
+    vat_id: string | null;
+    size: string | null;
+    stats: unknown;
+    offer_basis: {
+      cpv_class: string;
+      cpv_codes: string[];
+      wins: number;
+      median_value_eur: number | null;
+      min_value_eur: number | null;
+      floor_eur: number;
+      last_award_date: string | null;
+      example_title: string | null;
+    }[];
+    awards: SeedAward[];
+  }[];
+  listings: {
+    id: string;
+    external_id: string;
+    url: string | null;
+    buyer_id: string;
+    main_cpv: string;
+    cpv_codes: string[];
+    title: string;
+    title_en: string | null;
+    need: string | null;
+    description: string | null;
+    language: string | null;
+    procedure: string | null;
+    deadline: string | null;
+    estimated_value_eur: number | null;
+    walk_away_eur: number | null;
+    n_lots: number | null;
+    framework: boolean | null;
+    defence_directive: boolean;
+    eligibility: string;
+    fetched_at: string;
+  }[];
+}
+
+type MergedAward = SeedAward & { buyer_id: string | null };
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
@@ -28,178 +99,194 @@ if (!databaseUrl) {
   process.exit(1);
 }
 
-const sqlite = new Database(MARKET_DB, { readonly: true });
-const fetchedAt = statSync(MARKET_DB).mtime.toISOString();
+const seed = JSON.parse(readFileSync(SEED, "utf-8")) as Seed;
+// TED timestamps carry no zone; they are UTC.
+const utc = (timestamp: string) =>
+  TIMEZONE_SUFFIX.test(timestamp) ? timestamp : `${timestamp}Z`;
+
+// The same award appears under its buyer and under its supplier; merge them.
+const awardKey = (award: SeedAward) =>
+  [
+    award.external_id,
+    award.supplier_id ?? award.supplier_name,
+    award.buyer_name,
+  ].join("|");
+
+const mergeAwards = () => {
+  const byKey = new Map<string, MergedAward>();
+  for (const buyer of seed.buyers) {
+    for (const award of buyer.awards) {
+      const merged = {
+        ...award,
+        buyer_name: buyer.name,
+        buyer_country: buyer.country,
+        buyer_id: buyer.id,
+      };
+      byKey.set(awardKey(merged), merged);
+    }
+  }
+  for (const supplier of seed.suppliers) {
+    for (const award of supplier.awards) {
+      const key = awardKey({ ...award, supplier_id: supplier.id });
+      const existing = byKey.get(key);
+      byKey.set(key, {
+        ...award,
+        ...existing,
+        supplier_id: supplier.id,
+        supplier_name: supplier.name,
+        supplier_country: supplier.country,
+        buyer_id: existing?.buyer_id ?? null,
+      });
+    }
+  }
+  return [...byKey.values()];
+};
+
+const supplierIds = new Set(seed.suppliers.map((supplier) => supplier.id));
+const awards = mergeAwards();
 const pool = new Pool({ connectionString: databaseUrl });
 const client = await pool.connect();
 
-const copyTable = async (
-  source: string,
-  target: string,
-  columns: readonly string[]
-) => {
-  const rows = sqlite
-    .query(`select ${columns.join(", ")} from ${source}`)
-    .values() as unknown[][];
-  // Batches run in one transaction on one connection: one after another.
-  for (let start = 0; start < rows.length; start += BATCH_SIZE) {
-    const batch = rows.slice(start, start + BATCH_SIZE);
-    const placeholders = batch
-      .map(
-        (_, rowIndex) =>
-          `(${columns
-            .map(
-              (__, columnIndex) =>
-                `$${rowIndex * columns.length + columnIndex + 1}`
-            )
-            .join(", ")})`
-      )
-      .join(", ");
-    // oxlint-disable-next-line no-await-in-loop
-    await client.query(
-      `insert into ${target} (${columns.join(", ")}) values ${placeholders}`,
-      batch.flat()
-    );
-  }
-  console.log(`${target}: ${rows.length} rows`);
-};
-
 try {
   await client.query("begin");
-  await client.query(
-    "truncate raw_ted_tenders, raw_ted_awards, raw_ted_suppliers restart identity"
-  );
-  await copyTable("tenders", "raw_ted_tenders", [
-    "id",
-    "source",
-    "url",
-    "title",
-    "description",
-    "language",
-    "buyer_name",
-    "buyer_country",
-    "cpv",
-    "cpv_all",
-    "segment",
-    "procedure",
-    "value_eur",
-    "published",
-    "deadline",
-    "deadline_kind",
-  ]);
-  await copyTable("awards", "raw_ted_awards", [
-    "notice_id",
-    "supplier_id",
-    "buyer_name",
-    "buyer_country",
-    "cpv",
-    "segment",
-    "value_eur",
-    "n_bids",
-    "date",
-    "title",
-  ]);
-  await copyTable("suppliers", "raw_ted_suppliers", [
-    "id",
-    "name",
-    "country",
-    "city",
-    "size",
-    "n_awards",
-    "total_value_eur",
-    "top_cpvs",
-    "first_award",
-    "last_award",
-  ]);
+  // Leftover from the previous (RFQ) design.
+  await client.query("drop view if exists supplier_stats");
 
-  await client.query(`
-    insert into buyers (name, country)
-    select distinct buyer_name, buyer_country from (
-      select buyer_name, buyer_country from raw_ted_tenders
-      union select buyer_name, buyer_country from raw_ted_awards
-    ) b
-    where buyer_name is not null and buyer_country is not null
-    on conflict (name, country) do nothing`);
+  for (const buyer of seed.buyers) {
+    await client.query(
+      `insert into buyers (id, name, country, city, legal_type, stats)
+       values ($1, $2, $3, $4, $5, $6)
+       on conflict (id) do update set name = excluded.name, country = excluded.country,
+         city = excluded.city, legal_type = excluded.legal_type, stats = excluded.stats`,
+      [
+        buyer.id,
+        buyer.name,
+        buyer.country,
+        buyer.city,
+        buyer.legal_type,
+        JSON.stringify(buyer.stats),
+      ]
+    );
+  }
 
-  await client.query(`
-    insert into suppliers (id, name, country, city, size)
-    select id, coalesce(name, id), coalesce(country, split_part(id, ':', 1)), city, size
-    from raw_ted_suppliers
-    on conflict (id) do update set
-      name = excluded.name, country = excluded.country,
-      city = excluded.city, size = excluded.size`);
+  for (const supplier of seed.suppliers) {
+    await client.query(
+      `insert into suppliers (id, name, country, city, vat_id, size, stats)
+       values ($1, $2, $3, $4, $5, $6, $7)
+       on conflict (id) do update set name = excluded.name, country = excluded.country,
+         city = excluded.city, vat_id = excluded.vat_id, size = excluded.size,
+         stats = excluded.stats`,
+      [
+        supplier.id,
+        supplier.name,
+        supplier.country,
+        supplier.city,
+        supplier.vat_id,
+        supplier.size,
+        JSON.stringify(supplier.stats),
+      ]
+    );
+    await client.query(
+      "delete from supplier_offer_basis where supplier_id = $1",
+      [supplier.id]
+    );
+    for (const basis of supplier.offer_basis) {
+      await client.query(
+        `insert into supplier_offer_basis (supplier_id, cpv_class, cpv_codes, wins,
+           median_value_eur, min_value_eur, floor_eur, last_award_date, example_title)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          supplier.id,
+          basis.cpv_class,
+          basis.cpv_codes,
+          basis.wins,
+          basis.median_value_eur,
+          basis.min_value_eur,
+          basis.floor_eur,
+          basis.last_award_date,
+          basis.example_title,
+        ]
+      );
+    }
+  }
 
-  // Registry ids are the part after '<ISO3>:'; name-keyed suppliers have none.
-  await client.query(`
-    insert into identifiers (entity_type, entity_id, system, external_id)
-    select 'supplier', id, 'national-registry', substr(id, position(':' in id) + 1)
-    from suppliers where id not like '%:name:%'
-    on conflict do nothing`);
+  for (const listing of seed.listings) {
+    await client.query(
+      `insert into listings (id, external_id, url, buyer_id, main_cpv, cpv_codes, title,
+         title_en, need, description, language, procedure, deadline, estimated_value_eur,
+         walk_away_eur, n_lots, framework, defence_directive, eligibility, fetched_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+         $17, $18, $19, $20)
+       on conflict (id) do update set external_id = excluded.external_id, url = excluded.url,
+         buyer_id = excluded.buyer_id, main_cpv = excluded.main_cpv,
+         cpv_codes = excluded.cpv_codes, title = excluded.title,
+         title_en = excluded.title_en, need = excluded.need,
+         description = excluded.description, language = excluded.language,
+         procedure = excluded.procedure, deadline = excluded.deadline,
+         estimated_value_eur = excluded.estimated_value_eur,
+         walk_away_eur = excluded.walk_away_eur, n_lots = excluded.n_lots,
+         framework = excluded.framework, defence_directive = excluded.defence_directive,
+         eligibility = excluded.eligibility, fetched_at = excluded.fetched_at`,
+      [
+        listing.id,
+        listing.external_id,
+        listing.url,
+        listing.buyer_id,
+        listing.main_cpv,
+        listing.cpv_codes,
+        listing.title,
+        listing.title_en,
+        listing.need,
+        listing.description,
+        listing.language,
+        listing.procedure,
+        listing.deadline,
+        listing.estimated_value_eur,
+        listing.walk_away_eur,
+        listing.n_lots,
+        listing.framework,
+        listing.defence_directive,
+        listing.eligibility,
+        utc(listing.fetched_at),
+      ]
+    );
+  }
 
-  await client.query(
-    `
-    insert into listings (id, source_system, external_id, url, buyer_id, main_cpv,
-      cpv_codes, title, description, language, procedure, segment, deadline,
-      estimated_value_eur, eligibility, fetched_at)
-    select t.id, 'ted', regexp_replace(t.id, '^ted:', ''), t.url, b.id, t.cpv,
-      string_to_array(t.cpv_all, ';'), t.title, t.description, t.language,
-      t.procedure, t.segment, nullif(t.deadline, '')::date, t.value_eur,
-      ${ELIGIBILITY_SQL}, $1::timestamptz
-    from raw_ted_tenders t
-    left join buyers b on b.name = t.buyer_name and b.country = t.buyer_country
-    on conflict (id) do update set
-      url = excluded.url, buyer_id = excluded.buyer_id, main_cpv = excluded.main_cpv,
-      cpv_codes = excluded.cpv_codes, title = excluded.title,
-      description = excluded.description, language = excluded.language,
-      procedure = excluded.procedure, segment = excluded.segment,
-      deadline = excluded.deadline, estimated_value_eur = excluded.estimated_value_eur,
-      eligibility = excluded.eligibility, fetched_at = excluded.fetched_at`,
-    [fetchedAt]
-  );
-
-  await client.query(`
-    insert into identifiers (entity_type, entity_id, system, external_id)
-    select 'listing', id, source_system, external_id from listings
-    on conflict do nothing`);
-
-  // Awards are only referenced through suppliers and buyers, so replace them.
-  await client.query("delete from awards where source_system = 'ted'");
-  await client.query(`
-    insert into awards (source_system, external_id, buyer_id, supplier_id, cpv,
-      title, value_eur, award_date, tenders_received)
-    select 'ted', regexp_replace(a.notice_id, '^ted:', ''), b.id, a.supplier_id,
-      a.cpv, a.title, a.value_eur, nullif(a.date, '')::date, a.n_bids
-    from raw_ted_awards a
-    join suppliers s on s.id = a.supplier_id
-    left join buyers b on b.name = a.buyer_name and b.country = a.buyer_country
-    where a.cpv is not null`);
-
-  await client.query(`
-    create or replace view supplier_stats as
-    select supplier_id,
-      count(*)::int as win_count,
-      percentile_cont(0.5) within group (order by value_eur) as median_value_eur,
-      min(value_eur) as min_value_eur,
-      max(award_date) as last_award_date,
-      array_agg(distinct left(cpv, 3)) as cpv_classes
-    from awards
-    group by supplier_id`);
+  await client.query("delete from awards");
+  for (const award of awards) {
+    await client.query(
+      `insert into awards (external_id, url, buyer_id, buyer_name, buyer_country,
+         supplier_id, supplier_name, supplier_country, cpv, value_eur, tenders_received,
+         award_date, title)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      [
+        award.external_id,
+        award.url ?? null,
+        award.buyer_id,
+        award.buyer_name ?? null,
+        award.buyer_country ?? null,
+        award.supplier_id && supplierIds.has(award.supplier_id)
+          ? award.supplier_id
+          : null,
+        award.supplier_name ?? null,
+        award.supplier_country ?? null,
+        award.cpv ?? null,
+        award.value_eur ?? null,
+        award.tenders_received ?? null,
+        award.award_date ?? null,
+        award.title ?? null,
+      ]
+    );
+  }
 
   await client.query("commit");
-
-  const { rows } = await client.query(`
-    select
-      (select count(*) from buyers) as buyers,
-      (select count(*) from suppliers) as suppliers,
-      (select count(*) from listings) as listings,
-      (select count(*) from listings where deadline >= current_date) as open_listings,
-      (select count(*) from awards) as awards`);
-  console.log("loaded", rows[0], "fetched_at", fetchedAt);
+  console.log(
+    `Loaded ${seed.buyers.length} buyers, ${seed.suppliers.length} suppliers, ${seed.listings.length} listings, ${awards.length} awards (TED fetched ${seed.meta.ted_fetched_at}).`
+  );
 } catch (error) {
   await client.query("rollback");
   throw error;
 } finally {
   client.release();
   await pool.end();
-  sqlite.close();
 }

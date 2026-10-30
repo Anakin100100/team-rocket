@@ -1,8 +1,8 @@
-// The marketplace (plan.md §2): real TED demand and supply, plus the market
-// state agents act on. Raw tables mirror data_discovery/data/processed/market.db
-// and are only written by the loader (packages/db/scripts/load-market.ts);
-// entity tables and the `supplier_stats` view are built from them with SQL.
-import { sql } from "drizzle-orm";
+// The marketplace (plan.md §2.3). Data side: loaded from
+// data_discovery/data/processed/demo_seed.json by the loader
+// (packages/db/scripts/load-market.ts). Market side: written only through the
+// tools in packages/market. Columns marked "sealed" are never returned to a
+// party, only to observers.
 import {
   bigserial,
   boolean,
@@ -12,7 +12,6 @@ import {
   integer,
   jsonb,
   pgTable,
-  pgView,
   primaryKey,
   serial,
   text,
@@ -20,163 +19,128 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
-// --- Raw TED data (verbatim from market.db) ---------------------------------
+// --- Data side (public TED records) -------------------------------------------
 
-export const rawTedTenders = pgTable("raw_ted_tenders", {
+export const buyers = pgTable("buyers", {
   id: text("id").primaryKey(),
-  source: text("source"),
-  url: text("url"),
-  title: text("title"),
-  description: text("description"),
-  language: text("language"),
-  buyerName: text("buyer_name"),
-  buyerCountry: text("buyer_country"),
-  cpv: text("cpv"),
-  cpvAll: text("cpv_all"),
-  segment: text("segment"),
-  procedure: text("procedure"),
-  valueEur: doublePrecision("value_eur"),
-  published: text("published"),
-  deadline: text("deadline"),
-  deadlineKind: text("deadline_kind"),
-});
-
-export const rawTedAwards = pgTable("raw_ted_awards", {
-  id: serial("id").primaryKey(),
-  noticeId: text("notice_id"),
-  supplierId: text("supplier_id"),
-  buyerName: text("buyer_name"),
-  buyerCountry: text("buyer_country"),
-  cpv: text("cpv"),
-  segment: text("segment"),
-  valueEur: doublePrecision("value_eur"),
-  nBids: integer("n_bids"),
-  date: text("date"),
-  title: text("title"),
-});
-
-export const rawTedSuppliers = pgTable("raw_ted_suppliers", {
-  id: text("id").primaryKey(),
-  name: text("name"),
-  country: text("country"),
+  name: text("name").notNull(),
+  country: text("country").notNull(),
   city: text("city"),
-  size: text("size"),
-  nAwards: integer("n_awards"),
-  totalValueEur: doublePrecision("total_value_eur"),
-  topCpvs: text("top_cpvs"),
-  firstAward: text("first_award"),
-  lastAward: text("last_award"),
+  legalType: text("legal_type"),
+  // award_count, median_value_eur, median_tenders_received, cpv_classes
+  stats: jsonb("stats").notNull(),
 });
-
-// --- Entity tables (built from the raw tables) ------------------------------
-
-export const buyers = pgTable(
-  "buyers",
-  {
-    id: serial("id").primaryKey(),
-    name: text("name").notNull(),
-    country: text("country").notNull(),
-    city: text("city"),
-    legalType: text("legal_type"),
-  },
-  (table) => [
-    uniqueIndex("buyers_name_country_uidx").on(table.name, table.country),
-  ]
-);
 
 export const suppliers = pgTable(
   "suppliers",
   {
-    // market.db key: '<ISO3>:<registry id>' or '<ISO3>:name:<name>'.
     id: text("id").primaryKey(),
     name: text("name").notNull(),
     country: text("country").notNull(),
     city: text("city"),
     vatId: text("vat_id"),
     size: text("size"),
+    // win_count, median_value_eur, min_value_eur, last_award_date,
+    // cpv_classes, defence_directive_awards
+    stats: jsonb("stats").notNull(),
   },
   (table) => [index("suppliers_country_idx").on(table.country)]
 );
 
-export const identifiers = pgTable(
-  "identifiers",
+// What a supplier has won per 3-digit CPV class: the basis of its offers.
+export const supplierOfferBasis = pgTable(
+  "supplier_offer_basis",
   {
-    entityType: text("entity_type").notNull(),
-    entityId: text("entity_id").notNull(),
-    system: text("system").notNull(),
-    externalId: text("external_id").notNull(),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => suppliers.id, { onDelete: "cascade" }),
+    cpvClass: text("cpv_class").notNull(),
+    cpvCodes: text("cpv_codes").array().notNull(),
+    wins: integer("wins").notNull(),
+    medianValueEur: doublePrecision("median_value_eur"),
+    minValueEur: doublePrecision("min_value_eur"),
+    // sealed
+    floorEur: doublePrecision("floor_eur").notNull(),
+    lastAwardDate: date("last_award_date", { mode: "string" }),
+    exampleTitle: text("example_title"),
   },
-  (table) => [
-    primaryKey({ columns: [table.entityType, table.entityId, table.system] }),
-  ]
+  (table) => [primaryKey({ columns: [table.supplierId, table.cpvClass] })]
 );
 
-export const listings = pgTable(
-  "listings",
-  {
-    id: text("id").primaryKey(),
-    sourceSystem: text("source_system").notNull(),
-    externalId: text("external_id").notNull(),
-    url: text("url"),
-    buyerId: integer("buyer_id").references(() => buyers.id),
-    mainCpv: text("main_cpv"),
-    cpvCodes: text("cpv_codes").array(),
-    title: text("title"),
-    description: text("description"),
-    language: text("language"),
-    procedure: text("procedure"),
-    segment: text("segment"),
-    deadline: date("deadline", { mode: "string" }),
-    estimatedValueEur: doublePrecision("estimated_value_eur"),
-    nLots: integer("n_lots"),
-    framework: boolean("framework"),
-    securityClearance: boolean("security_clearance"),
-    // eu | nato | any — who may bid (see packages/market eligibility rules).
-    eligibility: text("eligibility").notNull().default("any"),
-    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
-  },
-  (table) => [
-    index("listings_main_cpv_idx").on(table.mainCpv),
-    index("listings_deadline_idx").on(table.deadline),
-  ]
-);
+export const listings = pgTable("listings", {
+  id: text("id").primaryKey(),
+  externalId: text("external_id").notNull(),
+  url: text("url"),
+  buyerId: text("buyer_id")
+    .notNull()
+    .references(() => buyers.id),
+  mainCpv: text("main_cpv").notNull(),
+  cpvCodes: text("cpv_codes").array().notNull(),
+  title: text("title").notNull(),
+  titleEn: text("title_en"),
+  need: text("need"),
+  description: text("description"),
+  language: text("language"),
+  procedure: text("procedure"),
+  deadline: date("deadline", { mode: "string" }),
+  estimatedValueEur: doublePrecision("estimated_value_eur"),
+  // sealed
+  walkAwayEur: doublePrecision("walk_away_eur"),
+  nLots: integer("n_lots"),
+  framework: boolean("framework"),
+  defenceDirective: boolean("defence_directive").notNull().default(false),
+  // eu | nato | any
+  eligibility: text("eligibility").notNull().default("any"),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
+});
 
 export const awards = pgTable(
   "awards",
   {
     id: serial("id").primaryKey(),
-    sourceSystem: text("source_system").notNull(),
     externalId: text("external_id").notNull(),
-    buyerId: integer("buyer_id").references(() => buyers.id),
-    supplierId: text("supplier_id")
-      .notNull()
-      .references(() => suppliers.id),
-    cpv: text("cpv").notNull(),
-    title: text("title"),
+    url: text("url"),
+    buyerId: text("buyer_id").references(() => buyers.id),
+    buyerName: text("buyer_name"),
+    buyerCountry: text("buyer_country"),
+    supplierId: text("supplier_id").references(() => suppliers.id),
+    supplierName: text("supplier_name"),
+    supplierCountry: text("supplier_country"),
+    cpv: text("cpv"),
     valueEur: doublePrecision("value_eur"),
-    awardDate: date("award_date", { mode: "string" }),
     tendersReceived: integer("tenders_received"),
+    awardDate: date("award_date", { mode: "string" }),
+    title: text("title"),
   },
   (table) => [
+    index("awards_buyer_idx").on(table.buyerId),
     index("awards_supplier_idx").on(table.supplierId),
-    index("awards_cpv_idx").on(table.cpv),
   ]
 );
 
-// Created by the loader; counts and medians are never stored on `suppliers`.
-export const supplierStats = pgView("supplier_stats", {
-  supplierId: text("supplier_id").notNull(),
-  winCount: integer("win_count").notNull(),
-  medianValueEur: doublePrecision("median_value_eur"),
-  minValueEur: doublePrecision("min_value_eur"),
-  lastAwardDate: date("last_award_date", { mode: "string" }),
-  cpvClasses: text("cpv_classes").array(),
-}).existing();
+// --- Market side ----------------------------------------------------------------
 
-// --- Market state -------------------------------------------------------------
+// One row per persona token (plan.md §5.1). Only the hash is stored.
+export const marketAgents = pgTable(
+  "market_agents",
+  {
+    tokenHash: text("token_hash").primaryKey(),
+    // buyer | supplier | observer
+    kind: text("kind").notNull(),
+    entityId: text("entity_id"),
+    name: text("name").notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("market_agents_identity_uidx").on(table.kind, table.entityId),
+  ]
+);
 
-export const rfqs = pgTable(
-  "rfqs",
+export const demands = pgTable(
+  "demands",
   {
     id: text("id")
       .primaryKey()
@@ -184,140 +148,121 @@ export const rfqs = pgTable(
     listingId: text("listing_id")
       .notNull()
       .references(() => listings.id),
-    buyerId: integer("buyer_id").references(() => buyers.id),
-    // QUOTING | EVALUATING | NEGOTIATING | AWARDED | CLOSED | FAILED
+    buyerId: text("buyer_id")
+      .notNull()
+      .references(() => buyers.id),
+    cpv: text("cpv").notNull(),
+    need: text("need").notNull(),
+    estimatedValueEur: doublePrecision("estimated_value_eur"),
+    // sealed
+    walkAwayEur: doublePrecision("walk_away_eur").notNull(),
+    // open | filled | withdrawn
     state: text("state").notNull(),
-    need: jsonb("need").notNull(),
-    budgetEur: doublePrecision("budget_eur"),
-    budgetTolerance: doublePrecision("budget_tolerance").notNull().default(1.1),
-    quotingDeadline: timestamp("quoting_deadline", {
-      withTimezone: true,
-    }).notNull(),
-    negotiationDeadline: timestamp("negotiation_deadline", {
-      withTimezone: true,
-    }),
-    negotiationUsed: boolean("negotiation_used").notNull().default(false),
-    awardedQuoteId: text("awarded_quote_id"),
-    failureReason: text("failure_reason"),
-    running: boolean("running").notNull().default(false),
-    runningSince: timestamp("running_since", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
   },
-  (table) => [index("rfqs_listing_idx").on(table.listingId)]
+  (table) => [index("demands_buyer_idx").on(table.buyerId)]
 );
 
-export const candidates = pgTable(
-  "candidates",
-  {
-    rfqId: text("rfq_id")
-      .notNull()
-      .references(() => rfqs.id, { onDelete: "cascade" }),
-    supplierId: text("supplier_id")
-      .notNull()
-      .references(() => suppliers.id),
-    tier: integer("tier").notNull(),
-    // CPV prefix the supplier matched on (3-digit class, 2-digit division or "35").
-    matchedCpv: text("matched_cpv").notNull(),
-    winsInCpv: integer("wins_in_cpv").notNull(),
-    priceLow: doublePrecision("price_low").notNull(),
-    priceHigh: doublePrecision("price_high").notNull(),
-    priceFloor: doublePrecision("price_floor").notNull(),
-    openDealsInCpv: integer("open_deals_in_cpv").notNull(),
-    counterPriceEur: doublePrecision("counter_price_eur"),
-    counterLeadTimeDays: integer("counter_lead_time_days"),
-    counterMessage: text("counter_message"),
-    declineReason: text("decline_reason"),
-    // invited | quoted | declined | countered | final | awarded | accepted | declined_award
-    status: text("status").notNull(),
-  },
-  (table) => [primaryKey({ columns: [table.rfqId, table.supplierId] })]
-);
-
-export const quotes = pgTable(
-  "quotes",
+export const offers = pgTable(
+  "offers",
   {
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    rfqId: text("rfq_id")
-      .notNull()
-      .references(() => rfqs.id, { onDelete: "cascade" }),
     supplierId: text("supplier_id")
       .notNull()
       .references(() => suppliers.id),
-    final: boolean("final").notNull(),
-    priceEur: doublePrecision("price_eur").notNull(),
+    cpvClass: text("cpv_class").notNull(),
+    cpvCodes: text("cpv_codes").array().notNull(),
+    askEur: doublePrecision("ask_eur").notNull(),
     leadTimeDays: integer("lead_time_days").notNull(),
     note: text("note"),
-    score: doublePrecision("score"),
-    rank: integer("rank"),
+    // sealed
+    floorEur: doublePrecision("floor_eur").notNull(),
+    // open | filled | withdrawn
+    state: text("state").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
-  // One quote per supplier per phase: a resumed run can't double quote.
-  (table) => [
-    uniqueIndex("quotes_rfq_supplier_phase_uidx").on(
-      table.rfqId,
-      table.supplierId,
-      table.final
-    ),
-  ]
+  (table) => [index("offers_supplier_idx").on(table.supplierId)]
 );
 
-export const deals = pgTable(
-  "deals",
+export const matches = pgTable(
+  "matches",
   {
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    rfqId: text("rfq_id")
+    demandId: text("demand_id")
       .notNull()
-      .references(() => rfqs.id, { onDelete: "cascade" }),
-    quoteId: text("quote_id")
+      .references(() => demands.id),
+    offerId: text("offer_id")
       .notNull()
-      .references(() => quotes.id),
-    buyerId: integer("buyer_id").references(() => buyers.id),
-    supplierId: text("supplier_id")
-      .notNull()
-      .references(() => suppliers.id),
-    cpv: text("cpv"),
-    priceEur: doublePrecision("price_eur").notNull(),
-    leadTimeDays: integer("lead_time_days").notNull(),
-    contractSummary: text("contract_summary").notNull(),
-    closedAt: timestamp("closed_at", { withTimezone: true })
+      .references(() => offers.id),
+    tier: integer("tier").notNull(),
+    // sealed: max(offer floor, 0.6 × the demand's published value)
+    floorEur: doublePrecision("floor_eur").notNull(),
+    // buyer | supplier
+    turn: text("turn").notNull(),
+    // open | agreed | abandoned | superseded
+    state: text("state").notNull(),
+    agreedPriceEur: doublePrecision("agreed_price_eur"),
+    agreedLeadTimeDays: integer("agreed_lead_time_days"),
+    closedReason: text("closed_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
   },
   (table) => [
-    uniqueIndex("deals_rfq_uidx").on(table.rfqId),
-    index("deals_supplier_idx").on(table.supplierId),
+    uniqueIndex("matches_demand_offer_uidx").on(table.demandId, table.offerId),
   ]
 );
 
-// Append only. The UI, MCP clients and resumed runs read it by cursor (`id`).
-export const events = pgTable(
-  "events",
+export const proposals = pgTable(
+  "proposals",
+  {
+    id: serial("id").primaryKey(),
+    matchId: text("match_id")
+      .notNull()
+      .references(() => matches.id),
+    // buyer | supplier
+    by: text("by").notNull(),
+    priceEur: doublePrecision("price_eur").notNull(),
+    leadTimeDays: integer("lead_time_days").notNull(),
+    message: text("message").notNull(),
+    // TED award URLs the agent cites
+    cites: jsonb("cites").notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index("proposals_match_idx").on(table.matchId, table.id)]
+);
+
+// Append only; the admin UI and `wait` read it by cursor. An event is
+// addressed to the buyer and/or supplier it names; observers see everything,
+// including `sealed`.
+export const marketEvents = pgTable(
+  "market_events",
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
-    rfqId: text("rfq_id").references(() => rfqs.id, { onDelete: "cascade" }),
+    matchId: text("match_id"),
+    demandId: text("demand_id"),
+    offerId: text("offer_id"),
+    buyerId: text("buyer_id"),
+    supplierId: text("supplier_id"),
     actor: text("actor").notNull(),
     action: text("action").notNull(),
-    // public: everyone · buyer: buyer + observers · private: the supplier + observers.
-    // Rows about one supplier carry its id, and that supplier always sees them.
-    audience: text("audience").notNull(),
-    supplierId: text("supplier_id"),
-    payload: jsonb("payload")
-      .notNull()
-      .default(sql`'{}'::jsonb`),
-    stateBefore: text("state_before"),
-    stateAfter: text("state_after"),
+    payload: jsonb("payload").notNull(),
+    sealed: jsonb("sealed"),
     ts: timestamp("ts", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("events_rfq_idx").on(table.rfqId, table.id)]
+  (table) => [
+    index("market_events_buyer_idx").on(table.buyerId, table.id),
+    index("market_events_supplier_idx").on(table.supplierId, table.id),
+  ]
 );
