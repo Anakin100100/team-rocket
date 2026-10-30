@@ -1,7 +1,7 @@
 // Admin UI for the agent marketplace (plan.md §6): read only, rebuilt from the
 // event log, polled twice a second. No forms: the agents are already trading.
-// One tab per concern: aggregates, demands, matches, offers. The open tab is
-// in the URL so a refresh or a shared link lands on it.
+// One tab per concern: aggregates, demands, matches, offers. The open tab and
+// the activity range are in the URL so a refresh or a shared link keeps them.
 import { Badge } from "@rocket/ui/components/badge";
 import { Button } from "@rocket/ui/components/button";
 import {
@@ -22,6 +22,11 @@ import { MarketDashboard } from "@/components/market/market-dashboard";
 import { MatchesTab } from "@/components/market/matches";
 import { DemandsTab, OffersTab } from "@/components/market/postings";
 import { formatDateTime } from "@/components/market/state";
+import {
+  DEFAULT_ACTIVITY_RANGE,
+  parseActivityRange,
+} from "@/components/market/stats";
+import type { ActivityRange } from "@/components/market/stats";
 import { useMarketFeed } from "@/components/market/use-market-feed";
 import { orpc } from "@/utils/orpc";
 
@@ -40,7 +45,9 @@ const Count = ({ value }: { value: number }) => (
 const MarketPage = () => {
   const feed = useMarketFeed();
   const { replay: handleReplay, stopReplay: handleStopReplay } = feed;
-  const tab = Route.useSearch().tab ?? DEFAULT_TAB;
+  const search = Route.useSearch();
+  const tab = search.tab ?? DEFAULT_TAB;
+  const range = search.range ?? DEFAULT_ACTIVITY_RANGE;
   const navigate = useNavigate({ from: Route.fullPath });
   const agents = useQuery({
     ...orpc.market.agents.queryOptions(),
@@ -56,10 +63,23 @@ const MarketPage = () => {
     (thread) => thread.state === "open"
   ).length;
 
+  // Defaults stay out of the URL.
   const handleTabChange = (value: unknown) => {
     const next = parseTab(value) ?? DEFAULT_TAB;
     navigate({
-      search: next === DEFAULT_TAB ? {} : { tab: next },
+      search: (previous) => ({
+        ...previous,
+        tab: next === DEFAULT_TAB ? undefined : next,
+      }),
+      replace: true,
+    });
+  };
+  const handleRangeChange = (next: ActivityRange) => {
+    navigate({
+      search: (previous) => ({
+        ...previous,
+        range: next === DEFAULT_ACTIVITY_RANGE ? undefined : next,
+      }),
       replace: true,
     });
   };
@@ -139,6 +159,9 @@ const MarketPage = () => {
             events={feed.events}
             agents={agents.data}
             replaying={feed.replaying}
+            serverLeadMs={feed.serverLeadMs}
+            range={range}
+            onRangeChange={handleRangeChange}
           />
         </TabsContent>
         <TabsContent value="demands" className="pt-2">
@@ -156,9 +179,11 @@ const MarketPage = () => {
 };
 
 export const Route = createFileRoute("/market")({
-  validateSearch: (search: Record<string, unknown>): { tab?: MarketTab } => {
-    const tab = parseTab(search.tab);
-    return tab ? { tab } : {};
-  },
+  validateSearch: (
+    search: Record<string, unknown>
+  ): { tab?: MarketTab; range?: ActivityRange } => ({
+    tab: parseTab(search.tab),
+    range: parseActivityRange(search.range),
+  }),
   component: MarketPage,
 });

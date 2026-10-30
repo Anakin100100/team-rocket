@@ -1,8 +1,11 @@
 // The dashboard tab: aggregates only, no individual postings or threads.
 // Re-renders every second so "ago" values and the activity window keep moving
-// between events; during a replay the clock is the last replayed event.
+// between events. Time runs on the server's clock (event times are the
+// server's), and during a replay it is the last replayed event.
+import { Button } from "@rocket/ui/components/button";
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -16,23 +19,23 @@ import type { client } from "@/utils/orpc";
 import { formatEur, formatEurShort, formatTime } from "./state";
 import type { MarketEvent, MarketView } from "./state";
 import {
+  ACTIVITY_RANGE_KEYS,
+  ACTIVITY_RANGES,
   activityBuckets,
   computeStats,
+  countSince,
+  formatBucketWidth,
   formatDuration,
   formatSignedPercent,
 } from "./stats";
-import type { ActivityBucket } from "./stats";
+import type { ActivityBucket, ActivityRange } from "./stats";
 
 export type MarketAgent = Awaited<
   ReturnType<typeof client.market.agents>
 >[number];
 
 const CLOCK_MS = 1000;
-const SECOND_MS = 1000;
 const MINUTE_MS = 60_000;
-const BUCKET_MS = 10_000;
-const BUCKETS = 30;
-const WINDOW_MINUTES = (BUCKETS * BUCKET_MS) / MINUTE_MS;
 const CHART_WIDTH = 640;
 const CHART_HEIGHT = 160;
 const CHART_MARGIN = { top: 12, right: 8, bottom: 22, left: 32 };
@@ -77,7 +80,15 @@ const barPath = (x: number, y: number, width: number, base: number) => {
   return `M${x},${base} V${y + radius} Q${x},${y} ${x + radius},${y} H${x + width - radius} Q${x + width},${y} ${x + width},${y + radius} V${base} Z`;
 };
 
-const ActivityChart = ({ buckets }: { buckets: ActivityBucket[] }) => {
+const ActivityChart = ({
+  buckets,
+  bucketMs,
+  windowMinutes,
+}: {
+  buckets: ActivityBucket[];
+  bucketMs: number;
+  windowMinutes: number;
+}) => {
   // Keyed by bucket start: the buckets are rebuilt every second.
   const [hoveredStart, setHoveredStart] = useState<number | null>(null);
   const titleId = useId();
@@ -102,7 +113,7 @@ const ActivityChart = ({ buckets }: { buckets: ActivityBucket[] }) => {
         aria-labelledby={titleId}
       >
         <title id={titleId}>
-          {`${plural(total, "event")} in the last ${WINDOW_MINUTES} minutes, at most ${peak} in any ${BUCKET_MS / SECOND_MS} seconds`}
+          {`${plural(total, "event")} in the last ${windowMinutes} minutes, at most ${peak} per ${formatBucketWidth(bucketMs)}`}
         </title>
         {[0, peak].map((tick) => (
           <g key={tick}>
@@ -145,7 +156,7 @@ const ActivityChart = ({ buckets }: { buckets: ActivityBucket[] }) => {
           y={CHART_HEIGHT - 4}
           className="fill-muted-foreground text-[11px]"
         >
-          {WINDOW_MINUTES} min ago
+          {windowMinutes} min ago
         </text>
         <text
           x={CHART_WIDTH - CHART_MARGIN.right}
@@ -179,7 +190,7 @@ const ActivityChart = ({ buckets }: { buckets: ActivityBucket[] }) => {
           <div className="font-medium">{plural(hovered.count, "event")}</div>
           <div className="text-muted-foreground">
             {formatTime(new Date(hovered.start).toISOString())} –{" "}
-            {formatTime(new Date(hovered.start + BUCKET_MS).toISOString())}
+            {formatTime(new Date(hovered.start + bucketMs).toISOString())}
           </div>
         </div>
       )}
@@ -197,32 +208,61 @@ const onlineByKind = (agents: MarketAgent[]) => {
   return [...counts].map(([kind, count]) => plural(count, kind)).join(" · ");
 };
 
+const RangePicker = ({
+  range,
+  onChange,
+}: {
+  range: ActivityRange;
+  onChange: (range: ActivityRange) => void;
+}) => (
+  <fieldset className="flex gap-1">
+    <legend className="sr-only">Activity time range</legend>
+    {ACTIVITY_RANGE_KEYS.map((key) => (
+      <Button
+        key={key}
+        size="xs"
+        variant={key === range ? "secondary" : "ghost"}
+        aria-pressed={key === range}
+        onClick={() => onChange(key)}
+      >
+        {key}
+      </Button>
+    ))}
+  </fieldset>
+);
+
 export const MarketDashboard = ({
   view,
   events,
   agents,
   replaying,
+  serverLeadMs,
+  range,
+  onRangeChange,
 }: {
   view: MarketView;
   events: readonly MarketEvent[];
   agents: MarketAgent[] | undefined;
   replaying: boolean;
+  serverLeadMs: number;
+  range: ActivityRange;
+  onRangeChange: (range: ActivityRange) => void;
 }) => {
   const now = useNow(CLOCK_MS);
   const lastEvent = events.at(-1);
-  const clock = replaying && lastEvent ? Date.parse(lastEvent.ts) : now;
+  const clock =
+    replaying && lastEvent ? Date.parse(lastEvent.ts) : now + serverLeadMs;
   const stats = computeStats(view);
+  const { windowMs, bucketMs } = ACTIVITY_RANGES[range];
   // Aligned to whole buckets so bars hold still between ticks; the last one
   // is the bucket in progress.
   const buckets = activityBuckets(
     events,
-    Math.ceil(clock / BUCKET_MS) * BUCKET_MS,
-    BUCKET_MS,
-    BUCKETS
+    Math.ceil(clock / bucketMs) * bucketMs,
+    bucketMs,
+    windowMs / bucketMs
   );
-  const lastMinute = buckets
-    .slice(-MINUTE_MS / BUCKET_MS)
-    .reduce((sum, bucket) => sum + bucket.count, 0);
+  const lastMinute = countSince(events, clock - MINUTE_MS);
   const online = agents?.filter((agent) => agent.online) ?? [];
   const { deals, demands, offers, threads, waitingOn } = stats;
 
@@ -264,12 +304,19 @@ export const MarketDashboard = ({
           <CardHeader>
             <CardTitle>Market activity</CardTitle>
             <CardDescription>
-              Events per {BUCKET_MS / SECOND_MS} seconds · {lastMinute} in the
+              Events per {formatBucketWidth(bucketMs)} · {lastMinute} in the
               last minute
             </CardDescription>
+            <CardAction>
+              <RangePicker range={range} onChange={onRangeChange} />
+            </CardAction>
           </CardHeader>
           <CardContent>
-            <ActivityChart buckets={buckets} />
+            <ActivityChart
+              buckets={buckets}
+              bucketMs={bucketMs}
+              windowMinutes={windowMs / MINUTE_MS}
+            />
           </CardContent>
         </Card>
       </div>

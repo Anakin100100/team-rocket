@@ -31,12 +31,36 @@ const fetchSince = async (since: number) => {
   return { events: collected, cursor };
 };
 
+// The largest `ts - arrival` over the batch: an event cannot be stamped later
+// than the server's own time when it arrives, so each is a lower bound on how
+// far the server's clock runs ahead of this browser's.
+const leadOf = (
+  events: readonly MarketEvent[],
+  arrivedAt: number,
+  floor: number
+) => {
+  let lead = floor;
+  for (const event of events) {
+    const stamped = Date.parse(event.ts);
+    if (!Number.isNaN(stamped)) {
+      lead = Math.max(lead, stamped - arrivedAt);
+    }
+  }
+  return lead;
+};
+
 export const useMarketFeed = () => {
   const [events, setEvents] = useState<MarketEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   // null = live; a number = how many events the replay currently shows.
   const [replayAt, setReplayAt] = useState<number | null>(null);
+  // Server clock minus browser clock (negative: the server is behind). Event
+  // times come from the server, so "now" on screen is Date.now() + this.
+  const [serverLeadMs, setServerLeadMs] = useState(0);
   const cursor = useRef(0);
+  const lead = useRef(Number.NEGATIVE_INFINITY);
+  const loaded = useRef(false);
+  const sawLive = useRef(false);
 
   // Each poll schedules the next once it lands, so a slow response delays
   // the following one instead of skipping a tick. A stopped loop drops its
@@ -51,6 +75,15 @@ export const useMarketFeed = () => {
           return;
         }
         cursor.current = batch.cursor;
+        lead.current = leadOf(batch.events, Date.now(), lead.current);
+        // The first load is history of unknown age: until an event arrives
+        // live, it can only show that the server runs ahead.
+        if (loaded.current && batch.events.length > 0) {
+          sawLive.current = true;
+        }
+        loaded.current = true;
+        const known = Number.isFinite(lead.current) ? lead.current : 0;
+        setServerLeadMs(sawLive.current ? known : Math.max(0, known));
         if (batch.events.length > 0) {
           setEvents((previous) => [...previous, ...batch.events]);
         }
@@ -92,6 +125,7 @@ export const useMarketFeed = () => {
   return {
     view,
     events: visible,
+    serverLeadMs,
     visibleEvents: visible.length,
     totalEvents: events.length,
     error,

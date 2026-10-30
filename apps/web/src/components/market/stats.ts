@@ -124,10 +124,52 @@ export const computeStats = (view: MarketView): MarketStats => {
   };
 };
 
+const SECOND_MS = 1000;
+const MINUTE_MS = 60_000;
+
+export const ACTIVITY_RANGE_KEYS = ["5m", "15m", "30m", "60m"] as const;
+export type ActivityRange = (typeof ACTIVITY_RANGE_KEYS)[number];
+export const DEFAULT_ACTIVITY_RANGE: ActivityRange = "5m";
+
+// Each range keeps 30 bars, so bucket width grows with the window.
+export const ACTIVITY_RANGES: Record<
+  ActivityRange,
+  { windowMs: number; bucketMs: number }
+> = {
+  "5m": { windowMs: 5 * MINUTE_MS, bucketMs: 10 * SECOND_MS },
+  "15m": { windowMs: 15 * MINUTE_MS, bucketMs: 30 * SECOND_MS },
+  "30m": { windowMs: 30 * MINUTE_MS, bucketMs: MINUTE_MS },
+  "60m": { windowMs: 60 * MINUTE_MS, bucketMs: 2 * MINUTE_MS },
+};
+
+export const parseActivityRange = (value: unknown) =>
+  ACTIVITY_RANGE_KEYS.find((range) => range === value);
+
+// "10 seconds", "minute", "2 minutes": reads after "per".
+export const formatBucketWidth = (bucketMs: number) => {
+  if (bucketMs < MINUTE_MS) {
+    return `${bucketMs / SECOND_MS} seconds`;
+  }
+  const minutes = bucketMs / MINUTE_MS;
+  return minutes === 1 ? "minute" : `${minutes} minutes`;
+};
+
 export interface ActivityBucket {
   start: number;
   count: number;
 }
+
+// Events stamped after `from` (the log is in id order, so walk back).
+export const countSince = (events: readonly MarketEvent[], from: number) => {
+  let count = 0;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (Date.parse(events[index]?.ts ?? "") <= from) {
+      break;
+    }
+    count += 1;
+  }
+  return count;
+};
 
 // Events per fixed-width bucket over the window ending at `end` (oldest first).
 export const activityBuckets = (
@@ -163,7 +205,6 @@ const PERCENT = new Intl.NumberFormat("en-GB", {
 export const formatSignedPercent = (value: number | null) =>
   value === null ? "—" : PERCENT.format(value);
 
-const SECOND_MS = 1000;
 const MINUTE_S = 60;
 const HOUR_S = 3600;
 
