@@ -1,6 +1,7 @@
 # Building the common format from TED
 
 The common format is one SQLite file, `data/processed/market.db`, with three data tables and two runtime tables:
+
 - **`tenders`**: the demand side.
 - **`suppliers`**: the supply side.
 - **`awards`**: who won what, for whom, at what price. This is the evidence that connects suppliers to the kinds of work they do.
@@ -26,7 +27,7 @@ Run all commands from `data_discovery/` (see README). A full rebuild from raw ta
 **`tenders`**: one row per procurement procedure that is (or was) open for bids.
 
 | column | meaning |
-|---|---|
+| --- | --- |
 | `id` | `ted:<publication-number>`, e.g. `ted:740343-2026` |
 | `source`, `url` | `ted`, link to the notice on ted.europa.eu |
 | `title`, `description`, `language` | original language (24 EU languages); description truncated to 600 chars, full text at `url` |
@@ -42,7 +43,7 @@ Run all commands from `data_discovery/` (see README). A full rebuild from raw ta
 **`suppliers`**: every organisation that has won at least one TED award.
 
 | column | meaning |
-|---|---|
+| --- | --- |
 | `id` | `<ISO3>:<registry id>` (e.g. `POL:6630002096`), or `<ISO3>:name:<NORMALIZED NAME>` when no usable id exists (§5.3) |
 | `name`, `country`, `city`, `size` | most frequent spelling; `size` = `micro`/`small`/`medium`/`large`/`sme` when declared |
 | `n_awards`, `total_value_eur` | track record |
@@ -52,7 +53,7 @@ Run all commands from `data_discovery/` (see README). A full rebuild from raw ta
 **`awards`**: one row per (award notice, winning supplier).
 
 | column | meaning |
-|---|---|
+| --- | --- |
 | `notice_id` | `ted:<publication-number>` of the award notice |
 | `supplier_id` | → `suppliers.id` |
 | `buyer_name`, `buyer_country`, `cpv`, `segment`, `title` | what was bought, by whom |
@@ -69,12 +70,23 @@ Run all commands from `data_discovery/` (see README). A full rebuild from raw ta
 **API.** `POST https://api.ted.europa.eu/v3/notices/search` is anonymous and needs no key. Request body:
 
 ```json
-{"query": "(classification-cpv IN (35000000) OR legal-basis IN (32009L0081)) AND publication-date>=20261001 AND publication-date<=20261031",
- "fields": ["publication-number", "notice-type", "title-proc", "buyer-name", "..."],
- "limit": 250, "scope": "ALL", "paginationMode": "ITERATION"}
+{
+  "query": "(classification-cpv IN (35000000) OR legal-basis IN (32009L0081)) AND publication-date>=20261001 AND publication-date<=20261031",
+  "fields": [
+    "publication-number",
+    "notice-type",
+    "title-proc",
+    "buyer-name",
+    "..."
+  ],
+  "limit": 250,
+  "scope": "ALL",
+  "paginationMode": "ITERATION"
+}
 ```
 
 **Scope.**
+
 - `classification-cpv IN (35000000)` matches all descendants: 35*, i.e. security, fire-fighting, police and defence equipment.
 - `legal-basis IN (32009L0081)` is the Defence & Security Directive. It catches defence buyers purchasing outside CPV 35 (vehicles, maintenance, IT, construction).
 - Together they give 47,737 notices since 2024-01, about 1,400–1,700 a month.
@@ -82,12 +94,14 @@ Run all commands from `data_discovery/` (see README). A full rebuild from raw ta
 **Fields.** The full list is `FIELDS` in `fetch_ted.py`. The API supports about 1,830 fields. To list them, request a nonexistent field: the 400 error names every valid one.
 
 **Pagination.**
+
 - Use `ITERATION` and follow `iterationNextToken` until no notices come back. `PAGE_NUMBER` mode stops at 15,000 results.
 - `limit` max is 250.
 
 **Rate limit.** The API returns `429` after about 10 rapid calls. The fetcher waits 2 s between calls and backs off on 429/5xx.
 
 **Storage.**
+
 - Pages are saved as `data/raw/ted/YYYY-MM/page_NNNN.json.gz` (≈230 KB each, 42 MB in total), with a `_complete` marker per month.
 - Re-running skips completed months but always re-fetches the current month. To refresh daily, run `fetch_ted.py --since <this month>`.
 
@@ -96,18 +110,42 @@ Run all commands from `data_discovery/` (see README). A full rebuild from raw ta
 ## 3. What a raw TED record looks like
 
 ```json
-{"publication-number": "740343-2026", "notice-type": "cn-standard", "form-type": "competition",
- "procedure-type": "restricted", "legal-basis": ["32009L0081"], "official-language": ["EST"],
- "buyer-name": {"est": ["Riigi Kaitseinvesteeringute Keskus"]}, "buyer-city": {"mul": ["Tallinn"]}, "buyer-country": ["EST"],
- "title-proc": {"est": "40mm, 23mm relvade ning 76mm, 40mm ja 23mm laskemoona ostmine koos elutsükli tagamisega"},
- "main-classification-proc": ["35331000"], "classification-cpv": ["35331000", "35320000", "35331000", "..."],
- "estimated-value-proc": "195000000.00", "estimated-value-cur-proc": "EUR",
- "estimated-value-lot": ["85000000.00", "30000000.00", "30000000.00", "25000000.00", "25000000.00"],
- "deadline-receipt-request-date-lot": ["2026-12-03+02:00", "2026-12-03+02:00", "..."],
- "framework-agreement-lot": ["fa-mix", "fa-mix", "..."], "publication-date": "2026-10-26+01:00"}
+{
+  "publication-number": "740343-2026",
+  "notice-type": "cn-standard",
+  "form-type": "competition",
+  "procedure-type": "restricted",
+  "legal-basis": ["32009L0081"],
+  "official-language": ["EST"],
+  "buyer-name": { "est": ["Riigi Kaitseinvesteeringute Keskus"] },
+  "buyer-city": { "mul": ["Tallinn"] },
+  "buyer-country": ["EST"],
+  "title-proc": {
+    "est": "40mm, 23mm relvade ning 76mm, 40mm ja 23mm laskemoona ostmine koos elutsükli tagamisega"
+  },
+  "main-classification-proc": ["35331000"],
+  "classification-cpv": ["35331000", "35320000", "35331000", "..."],
+  "estimated-value-proc": "195000000.00",
+  "estimated-value-cur-proc": "EUR",
+  "estimated-value-lot": [
+    "85000000.00",
+    "30000000.00",
+    "30000000.00",
+    "25000000.00",
+    "25000000.00"
+  ],
+  "deadline-receipt-request-date-lot": [
+    "2026-12-03+02:00",
+    "2026-12-03+02:00",
+    "..."
+  ],
+  "framework-agreement-lot": ["fa-mix", "fa-mix", "..."],
+  "publication-date": "2026-10-26+01:00"
+}
 ```
 
 Fields that don't apply are omitted. There are three shapes to handle:
+
 - **scalars**, e.g. `procedure-type`;
 - **multilingual dicts** `{lang: value | [values]}`;
 - **per-lot or per-organisation arrays**.
@@ -117,7 +155,7 @@ Fields that don't apply are omitted. There are three shapes to handle:
 ## 4. Step 2: Normalize (`normalize_ted.py`)
 
 | # | TED quirk | Rule |
-|---|---|---|
+| --- | --- | --- |
 | 4.1 | Multilingual dicts (`title-proc`, `description-proc`, `buyer-name`, `winner-name`, `buyer-city` with key `mul`) | Take the first (original-language) entry. Its key becomes `language`. Translating to English is left to the LLM layer. |
 | 4.2 | Per-lot arrays repeat values (`classification-cpv`, `contract-nature`, …) | De-duplicate, keep order. Main CPV = `main-classification-proc[0]`. |
 | 4.3 | Notice kinds | `form-type` → `competition`=**tender**, `result`=**award**, `planning`=prior_info, `dir-awa-pre`=direct_award_notice, `cont-modif`=modification, `consultation`. |
@@ -128,6 +166,7 @@ Fields that don't apply are omitted. There are three shapes to handle:
 | 4.8 | Winners don't line up | `winner-name` is listed **per lot result**, with repeats. `winner-country`, `-city`, `-identifier` and `-size` are listed **per organisation**. After de-duplicating names: if they line up 1:1 with the org lists, zip them (`attribution=zipped`; `exact` if there's only one winner). If they don't, keep only attributes shared by all winners (`uniform`). |
 
 Outputs:
+
 - `ted_notices.csv`: 21 common columns + TED extras + `*_eur`, `segment`, `value_suspect`, `deadline_kind`, `is_open`.
 - `ted_award_winners.csv`.
 
@@ -136,17 +175,21 @@ Outputs:
 ## 5. Step 3: Build (`build_db.py`)
 
 ### 5.1 `tenders`
+
 - Rows with `notice_type == tender`.
 - Suspect values become NULL.
 - Descriptions are truncated to 600 chars.
 
 ### 5.2 Remove republished duplicates
-TED re-issues the *full* notice for every correction, under a new publication number. 8,274 of the 24,944 tender notices repeat an earlier buyer and title, with a median gap of 20 days and 90% within 63 days.
+
+TED re-issues the _full_ notice for every correction, under a new publication number. 8,274 of the 24,944 tender notices repeat an earlier buyer and title, with a median gap of 20 days and 90% within 63 days.
 
 Rule: within each (buyer, title) chain, keep the latest version. A gap of more than 120 days starts a new chain, so genuine yearly re-tenders survive. Result: 17,095 tenders, 701 open, and no duplicates among the open ones.
 
 ### 5.3 Supplier identity
+
 The same company appears with different spellings and id formats. The supplier id is built in three steps:
+
 1. **Registry id.** `<winner ISO3>:<normalized registry id>`. Normalizing strips labels and separators, takes the first run of 6–14 digits, and drops a 2-letter VAT prefix:
    - `NIP: 663-000-20-96` → `POL:6630002096`
    - `NL008372809B01` → `NLD:008372809`
@@ -157,6 +200,7 @@ The same company appears with different spellings and id formats. The supplier i
 3. **Otherwise.** `<ISO3>:name:<NORMALIZED NAME>`. This covers 2,753 of 12,513 suppliers. 289 have no known country, because their winner lists didn't line up (§4.8).
 
 ### 5.4 `awards` and `suppliers`
+
 - **`awards`:** one row per winner row. `value_eur` = award total ÷ winners.
 - **`suppliers`:** grouped by id: most frequent name, city and size, plus `n_awards`, `total_value_eur`, `top_cpvs` (5) and first/last award.
 
@@ -165,7 +209,7 @@ The same company appears with different spellings and id formats. The supplier i
 ## 6. Field mapping (TED → common format)
 
 | common column | TED field(s) | rule |
-|---|---|---|
+| --- | --- | --- |
 | `tenders.id` | `publication-number` | `ted:` prefix |
 | `title`, `description`, `language` | `title-proc`, `description-proc` | §4.1 |
 | `buyer_name`, `buyer_country` | `buyer-name`, `buyer-country` | §4.1, ISO-3 kept |
@@ -186,11 +230,23 @@ The same company appears with different spellings and id formats. The supplier i
 **A tender.** The raw record in §3 becomes:
 
 ```json
-{"id": "ted:740343-2026", "source": "ted", "url": "https://ted.europa.eu/en/notice/-/detail/740343-2026",
- "title": "40mm, 23mm relvade ning 76mm, 40mm ja 23mm laskemoona ostmine koos elutsükli tagamisega",
- "language": "est", "buyer_name": "Riigi Kaitseinvesteeringute Keskus", "buyer_country": "EST",
- "cpv": "35331000", "cpv_all": "35331000;35320000", "segment": "military", "procedure": "restricted",
- "value_eur": 195000000.0, "published": "2026-10-26", "deadline": "2026-12-03", "deadline_kind": "request_to_participate"}
+{
+  "id": "ted:740343-2026",
+  "source": "ted",
+  "url": "https://ted.europa.eu/en/notice/-/detail/740343-2026",
+  "title": "40mm, 23mm relvade ning 76mm, 40mm ja 23mm laskemoona ostmine koos elutsükli tagamisega",
+  "language": "est",
+  "buyer_name": "Riigi Kaitseinvesteeringute Keskus",
+  "buyer_country": "EST",
+  "cpv": "35331000",
+  "cpv_all": "35331000;35320000",
+  "segment": "military",
+  "procedure": "restricted",
+  "value_eur": 195000000.0,
+  "published": "2026-10-26",
+  "deadline": "2026-12-03",
+  "deadline_kind": "request_to_participate"
+}
 ```
 
 The same tender was first published as `693937-2026` (deadline 2026-11-13) and then corrected. §5.2 keeps only this version.
@@ -198,34 +254,54 @@ The same tender was first published as `693937-2026` (deadline 2026-11-13) and t
 **An award with three winners.**
 
 Raw award notice `218629-2024`, from the Finnish Defence Forces (F/A-18 air-conditioning spare parts):
+
 ```json
-{"form-type": "result", "procedure-type": "restricted", "legal-basis": ["32009L0081"],
- "buyer-name": {"fin": ["Puolustusvoimat"]}, "main-classification-proc": ["35640000"],
- "total-value": 439670.05, "total-value-cur": ["EUR"],
- "winner-name": {"fin": ["Relli Tecnology Holland B.V.", "All Clear Aerospace & Defense, Inc", "Simtech, Inc"]},
- "winner-country": ["NLD", "USA", "USA"], "winner-identifier": ["NL008372809B01", "U97000459", "8800573"],
- "winner-city": ["Rijswijk", "Miramar", "East Granby"],
- "received-submissions-type-code": ["tenders", "part-req"], "received-submissions-type-val": ["5", "13"]}
+{
+  "form-type": "result",
+  "procedure-type": "restricted",
+  "legal-basis": ["32009L0081"],
+  "buyer-name": { "fin": ["Puolustusvoimat"] },
+  "main-classification-proc": ["35640000"],
+  "total-value": 439670.05,
+  "total-value-cur": ["EUR"],
+  "winner-name": {
+    "fin": [
+      "Relli Tecnology Holland B.V.",
+      "All Clear Aerospace & Defense, Inc",
+      "Simtech, Inc"
+    ]
+  },
+  "winner-country": ["NLD", "USA", "USA"],
+  "winner-identifier": ["NL008372809B01", "U97000459", "8800573"],
+  "winner-city": ["Rijswijk", "Miramar", "East Granby"],
+  "received-submissions-type-code": ["tenders", "part-req"],
+  "received-submissions-type-val": ["5", "13"]
+}
 ```
+
 This becomes three `awards` rows: `value_eur` = 439,670.05 / 3 = 146,556.68 each, and `n_bids` = 5 (13 = requests to participate). It also feeds three `suppliers`:
+
 ```json
 {"id": "NLD:008372809", "name": "Relli Technology Holland B.V.", "country": "NLD", "city": "Rijswijk", "n_awards": 2, "top_cpvs": "35640000;35000000"}
 {"id": "USA:97000459",  "name": "All Clear Aerospace & Defense, Inc", "country": "USA", "city": "Miramar", "n_awards": 3}
 {"id": "USA:8800573",   "name": "Simtech, Inc", "country": "USA", "city": "East Granby", "n_awards": 3}
 ```
-This notice misspells the name as "Relli *Tecnology*". The registry id merges it with the supplier's other award, and the name shown is the most frequent spelling.
+
+This notice misspells the name as "Relli _Tecnology_". The registry id merges it with the supplier's other award, and the name shown is the most frequent spelling.
 
 ---
 
 ## 8. Using it
 
 **Open military tenders, biggest first:**
+
 ```sql
 SELECT id, buyer_country, title, value_eur, deadline FROM open_tenders
 WHERE segment = 'military' ORDER BY value_eur DESC NULLS LAST;
 ```
 
 **Who has delivered this kind of thing.** These are the candidate suppliers for the market maker:
+
 ```sql
 SELECT s.id, s.name, s.country, count(*) AS wins, round(avg(a.value_eur)) AS avg_award_eur
 FROM awards a JOIN suppliers s ON s.id = a.supplier_id
@@ -234,6 +310,7 @@ GROUP BY s.id ORDER BY wins DESC LIMIT 20;
 ```
 
 **`match.py`** ranks candidates with an explainable score:
+
 - 10·ln(1 + awards in the same 5-digit CPV group) + 2·ln(1 + other awards in the 3-digit division)
 - +3 if the supplier has supplied this buyer before; +1 if local; +1 if its typical award is within 10× the estimate; +1 if active in the last 12 months.
 
@@ -246,6 +323,7 @@ The log terms stop volume sellers from swamping specialists. For example, on Spa
 ## 9. Adding another source
 
 **Loader contract:**
+
 - Insert rows into `tenders` and `awards` with your own id prefix (`bzp:`, `nspa:`, …) and the same column meanings: ISO-3 countries, 8-digit CPVs, EUR values, ISO dates.
 - Rebuild `suppliers` from `awards`.
 - Use supplier ids `<ISO3>:<registry id>`, so a Polish company that won on TED and on BZP becomes **one** supplier. MESKO S.A. merges across 4 sources via NIP `6630002096`.
@@ -253,7 +331,7 @@ The log terms stop volume sellers from swamping specialists. For example, on Spa
 The fetchers already exist and write to `data/raw/staging/`. Per-source notes:
 
 | source | id | mapping notes |
-|---|---|---|
+| --- | --- | --- |
 | **e-Zamówienia (BZP)** | `bzp:<bzpNumber>` | `cpvCode` is a string like `"22200000-2 (Gazety),…"`: parse the 8-digit codes. Buyer NIP is in `organizationNationalId`. `contractors[]` lines up with `procedureResult` per part (`zawarcieUmowy` = contract signed, `uniewaznienie` = cancelled → contractor null). The supplier id is `POL:<contractorNationalId>`. `tenderId` (an OCDS id) links tender ↔ result. Dates are UTC (`…Z`). Values are PLN and mostly appear only in the notice HTML. |
 | **NATO NSPA** | `nspa:<reference>` | There's no CPV. Map the NSN's first 4 digits (FSC, e.g. `1560` = airframe structural components) to a CPV or category. Buyer = NSPA (LUX) plus programme (`purchasing_org_name`). `closing_date` is local Luxembourg time with no offset. No values, and no public awards. These are the best candidates for a fully autonomous deal (one NSN, one quantity). |
 | **EDA** | `eda:<reference>` | Awards come from the annual contract list. Winner VAT `BE0413652243` → `BEL:0413652243`. Buyer = EDA (BEL). |

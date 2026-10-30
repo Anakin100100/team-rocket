@@ -45,9 +45,11 @@
     "deploy": "tsx scripts/deploy.ts preview",
     "deploy:prod": "tsx scripts/deploy.ts production",
     "deploy:check": "bunx vercel deploy --dry",
+    "client:python": "scripts/generate-python-client.sh",
     "env:generate": "varlock codegen --path ./apps/web/ && varlock codegen --path ./apps/server/ && varlock codegen --path ./packages/db/",
     "postinstall": "varlock codegen --path ./apps/web/ && varlock codegen --path ./apps/server/ && varlock codegen --path ./packages/db/",
     "auth:generate": "cd apps/server && bun run auth:generate",
+    "org:create": "cd apps/server && bun run org:create",
     "check": "ultracite check",
     "fix": "ultracite fix"
   },

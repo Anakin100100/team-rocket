@@ -18,8 +18,8 @@ const Header = () => {
   const { data: session } = useSession(authClient);
   // Keyed by user so a different account never sees a cached answer.
   const canViewFeedback = useQuery({
-    ...orpc.feedback.canView.queryOptions(),
-    queryKey: [...orpc.feedback.canView.queryKey(), session?.user.id],
+    ...orpc.isAdmin.queryOptions(),
+    queryKey: [...orpc.isAdmin.queryKey(), session?.user.id],
     enabled: Boolean(session),
   });
 

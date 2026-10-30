@@ -1,12 +1,16 @@
 import { TooltipProvider } from "@rocket/ui/components/tooltip";
+import { useQuery } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { useMemo } from "react";
 import type { ComponentProps, ReactNode } from "react";
 
 import { AuthProvider } from "@/components/auth/auth-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 import { authClient } from "@/lib/auth-client";
+import { apiKeyPlugin } from "@/lib/auth/api-key-plugin";
 import { organizationPlugin } from "@/lib/auth/organization-plugin";
+import { orpc } from "@/utils/orpc";
 
 const AUTH_PATH_PREFIX = "/auth/";
 
@@ -41,7 +45,10 @@ const AuthLink = ({
 };
 
 // Mirrors the server's `allowUserToCreateOrganization: false`.
-const authPlugins = [organizationPlugin({ allowOrganizationCreation: false })];
+const basePlugins = [organizationPlugin({ allowOrganizationCreation: false })];
+// Only app admins may create API keys (enforced by the server), so only they
+// get the API Keys card in Settings → Security.
+const adminPlugins = [...basePlugins, apiKeyPlugin()];
 
 export const Providers = ({
   children,
@@ -51,6 +58,17 @@ export const Providers = ({
   queryClient: QueryClient;
 }) => {
   const navigate = useNavigate();
+  const { data: session } = authClient.useSession();
+  // Keyed by user so a different account never sees a cached answer.
+  const isAdmin = useQuery({
+    ...orpc.isAdmin.queryOptions(),
+    queryKey: [...orpc.isAdmin.queryKey(), session?.user.id],
+    enabled: Boolean(session),
+  });
+  const authPlugins = useMemo(
+    () => (isAdmin.data === true ? adminPlugins : basePlugins),
+    [isAdmin.data]
+  );
 
   return (
     <ThemeProvider

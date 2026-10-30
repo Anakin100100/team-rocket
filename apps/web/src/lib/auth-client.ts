@@ -1,3 +1,4 @@
+import { apiKeyClient } from "@better-auth/api-key/client";
 import { oauthProviderClient } from "@better-auth/oauth-provider/client";
 import { adminClient, organizationClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
@@ -38,5 +39,10 @@ export const authClient = createAuthClient({
   baseURL: `${getServerUrl(ENV.VITE_SERVER_URL)}/auth`,
   // oauthProviderClient: sign-in on an OAuth login page (e.g. an MCP client
   // connecting) carries the signed authorization request and resumes it.
-  plugins: [adminClient(), organizationClient(), oauthProviderClient()],
+  plugins: [
+    adminClient(),
+    apiKeyClient(),
+    organizationClient(),
+    oauthProviderClient(),
+  ],
 });

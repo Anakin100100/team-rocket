@@ -72,7 +72,7 @@ export const Route = createFileRoute("/_auth/feedback")({
   // The API enforces this too; the redirect only keeps non-admins off the page.
   beforeLoad: async ({ context }) => {
     const canView = await context.queryClient.fetchQuery(
-      context.orpc.feedback.canView.queryOptions()
+      context.orpc.isAdmin.queryOptions()
     );
     if (!canView) {
       throw redirect({ to: "/dashboard" });

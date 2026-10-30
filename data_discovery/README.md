@@ -1,6 +1,7 @@
 # Data discovery
 
 This folder holds the data exploration done for the hackathon. It contains:
+
 - downloaders for 5 European procurement sources, plus ECB exchange rates;
 - a cross-source analysis;
 - a minimal **TED-only common format** (`data/processed/market.db`) with a supplier matcher, which the marketplace can build on.
@@ -52,10 +53,10 @@ Other sources: `fetch_ezamowienia.py`, `fetch_nspa.py`, `fetch_eda.py` and `fetc
 ## Sources
 
 | Source | What we got | How | Notes |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **TED** (EU) | 47,737 defence & security notices, 2024-01 → 2026-10-30: 24,944 tenders, 19,661 awards, 38,656 award×winner rows | Anonymous v3 search API (`api.ted.europa.eu/v3/notices/search`) | Scope is CPV 35* OR Directive 2009/81/EC. Returns 429 if hammered, so 2 s between calls. **Basis of the common format.** |
 | **e-Zamówienia / BZP** (PL) | 33,979 notices from the last 12 months: 12,010 defence-relevant (5,710 tenders, 6,300 awards with contractor NIP) and ~22k general context rows | Public `ezamowienia.gov.pl/mo-board/api/v1` JSON | Below-EU-threshold national procurement. PageSize is capped at 10, so bulk lists come from the XML report. The CPV filter is a substring match. `tenderId` links a tender to its result. |
-| **Agencja Uzbrojenia** (PL) | 76 signed-contract records, 2024-11 → 2026-10 | MoD press releases on gov.pl, plus the AU homepage | AU's own sites (wojsko-polskie.pl/au, au-bip.wp.mil.pl) are behind an Imperva bot wall, which we did not bypass. AU *tenders* are in TED instead (145 notices). Values are often package totals. |
+| **Agencja Uzbrojenia** (PL) | 76 signed-contract records, 2024-11 → 2026-10 | MoD press releases on gov.pl, plus the AU homepage | AU's own sites (wojsko-polskie.pl/au, au-bip.wp.mil.pl) are behind an Imperva bot wall, which we did not bypass. AU _tenders_ are in TED instead (145 notices). Values are often package totals. |
 | **NATO NSPA** | 2,200 notices, 2025-02 → today: 1,296 RFPs (93 open) and 904 future-business notices | Public grid on `eportal.nspa.nato.int/eProcurement5G` | The www site is Cloudflare-blocked. Records have no CPV, value or end buyer. 75 have an NSN or part number in the title. Bidders need an NCAGE code and NSPA Source File registration. |
 | **EDA** | 120 notices (101 awards from the 2025 contract list), plus **Defence Data 2005–2025** for EU27 | eda.europa.eu HTML, PDFs, Excel | Defence Data covers total spend, investment, equipment procurement, R&D and % of GDP per country and year. National figures sum to EDA's EU27 totals. |
 | **ECB** | Euro reference FX rates for 32 currencies (2026-10-29) | `eurofxref-daily.xml` | Used for every `*_eur` value. |
@@ -63,7 +64,7 @@ Other sources: `fetch_ezamowienia.py`, `fetch_nspa.py`, `fetch_eda.py` and `fetc
 ### Staging files (`data/raw/staging/`, gitignored)
 
 | File | Rows | Content |
-|---|---|---|
+| --- | --- | --- |
 | `ted_notices.csv` | 47,737 | one row per TED notice: common columns plus TED extras (segment, deadline_kind, tenders_received, value_suspect, …) |
 | `ted_award_winners.csv` | 38,656 | one row per (award notice, winner) |
 | `ezamowienia_notices.csv` | 33,979 | BZP notices with a `defence_relevant` flag and `tender_id` |
@@ -81,27 +82,32 @@ All per-source notice CSVs share 21 columns: `source, source_id, url, title, des
 Numbers are as of 2026-10-30. They come from `analyze_ted.py` and `analyze_all.py`.
 
 **Demand**
+
 - There are **653 open defence opportunities**: TED 287, BZP 271, NSPA 93, EDA 2. 443 of them close within 14 days.
 - In `market.db`, after removing republished duplicates, TED has 701 open tenders, 263 of them military.
-- 211 of TED's open military tenders are restricted or negotiated procedures. Firms must *request to participate* first.
+- 211 of TED's open military tenders are restricted or negotiated procedures. Firms must _request to participate_ first.
 - Open military tenders that publish an estimate add up to about **€1.47bn**.
 
 **Supply**
+
 - **10,205** suppliers have at least one defence award; 70% won only once.
 - Only **8%** have ever sold across a border, and **9.4%** of TED military wins are cross-border.
 - **53% of military awards on TED received a single bid.** This is the "missed" problem from the challenge brief, in numbers.
 - The top 1% of suppliers hold 62% of attributed defence award value.
 
 **Poland**
+
 - 5,468 Polish defence suppliers appear in the data; **only 26 (0.5%) ever won abroad**.
 - 4,557 appear only in national BZP tenders, never at EU level.
 - The largest AU contracts (e.g. 13.5bn PLN for 155 mm ammunition, Borsuk IFVs) appear only in press releases, never as open tenders.
 
 **Market size**
+
 - EU27 defence spending went from €214bn (2021) to **€418bn (2025)**. Poland has the highest share of GDP at 4.32%.
 - TED-visible defence awards in 2025 were €40.6bn, against €132.6bn of defence investment. So about **⅓** of defence investment is visible on TED; Germany shows 9% and Italy 4%.
 
 **Matchability**
+
 - **88%** of open defence tenders that have a CPV code also have at least 5 past winners in the same CPV group (median 32). Every RFQ starts with a real shortlist.
 
 ## Caveats

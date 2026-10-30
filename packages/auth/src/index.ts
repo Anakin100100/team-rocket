@@ -1,3 +1,4 @@
+import { apiKey } from "@better-auth/api-key";
 import { cimd } from "@better-auth/cimd";
 import { fetchClientMetadataResource } from "@better-auth/cimd/node";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter/relations-v2";
@@ -5,12 +6,17 @@ import { mcp } from "@better-auth/mcp";
 import type { Database } from "@rocket/db";
 import * as schema from "@rocket/db/schema/auth";
 import { betterAuth } from "better-auth";
-import { APIError, createAuthMiddleware } from "better-auth/api";
+import {
+  APIError,
+  createAuthMiddleware,
+  getSessionFromCtx,
+} from "better-auth/api";
 import { admin } from "better-auth/plugins/admin";
 import { jwt } from "better-auth/plugins/jwt";
 import { organization } from "better-auth/plugins/organization";
 import { and, eq, gt } from "drizzle-orm";
 
+import { isAppAdmin } from "./admin";
 import {
   createEmailSender,
   invitationEmail,
@@ -23,6 +29,8 @@ export interface AuthConfig extends EmailConfig {
   BETTER_AUTH_URL: string;
   BETTER_AUTH_SECRET: string;
   CORS_ORIGIN: string;
+  // Owners/admins of this organization are app admins (see `isAppAdmin`).
+  ADMIN_ORGANIZATION_SLUG: string;
 }
 
 // The MCP endpoint on the API server; OAuth access tokens are audience-bound to it.
@@ -95,15 +103,35 @@ export const createAuth = (
     hooks: {
       // Accounts are invite-only: self sign-up is open only to emails with a
       // pending invitation. Server-side creation (admin `createUser`) is unaffected.
+      // API keys act as their owner on every endpoint, so only app admins may
+      // create them. Server-side creation (no session, explicit `userId`) is
+      // a system action and stays allowed.
       before: createAuthMiddleware(async (ctx) => {
-        if (ctx.path !== "/sign-up/email") {
-          return;
+        if (ctx.path === "/sign-up/email") {
+          const email: unknown = ctx.body?.email;
+          if (
+            typeof email !== "string" ||
+            !(await hasPendingInvitation(email))
+          ) {
+            throw new APIError("FORBIDDEN", {
+              message: "Sign-up is by invitation only.",
+            });
+          }
         }
-        const email: unknown = ctx.body?.email;
-        if (typeof email !== "string" || !(await hasPendingInvitation(email))) {
-          throw new APIError("FORBIDDEN", {
-            message: "Sign-up is by invitation only.",
-          });
+        if (ctx.path === "/api-key/create") {
+          const session = await getSessionFromCtx(ctx);
+          const isAdmin =
+            session !== null &&
+            (await isAppAdmin(
+              database,
+              session.user.id,
+              env.ADMIN_ORGANIZATION_SLUG
+            ));
+          if (session && !isAdmin) {
+            throw new APIError("FORBIDDEN", {
+              message: "Only admins can create API keys.",
+            });
+          }
         }
       }),
     },
@@ -128,6 +156,13 @@ export const createAuth = (
     plugins: [
       // Server-side user management (e.g. `createUser` for invite-only accounts).
       admin(),
+      // Admin API keys (`x-api-key` header). A key is a session for its owner,
+      // so it reaches every endpoint the owner can. The default per-key limit
+      // (10 requests/day) would make that useless.
+      apiKey({
+        enableSessionForAPIKeys: true,
+        rateLimit: { enabled: false },
+      }),
       organization({
         // Organizations are provisioned by the app (server-side `createOrganization`
         // with a `userId`, which Better Auth treats as a system action), not by users.

@@ -13,5 +13,7 @@ export default defineConfig({
     "packages/ui/src/components/**",
     "apps/web/src/components/auth/**",
     "apps/web/src/lib/auth/**",
+    // Generated API clients (scripts/generate-python-client.sh).
+    "clients/**",
   ],
 });

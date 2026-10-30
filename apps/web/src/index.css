@@ -1,1 +1,15 @@
 @import "@rocket/ui/globals.css";
+
+/* Self-hosted fonts for the amber-minimal theme (--font-sans / --font-mono). */
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/jetbrains-mono/400.css";
+
+/* JetBrains Mono ligatures turn `--flag` into a long dash; commands must read literally. */
+code,
+kbd,
+pre,
+samp {
+  font-variant-ligatures: none;
+}

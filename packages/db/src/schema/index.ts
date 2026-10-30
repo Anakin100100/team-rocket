@@ -1,5 +1,6 @@
 export {
   account,
+  apikey,
   authRelations,
   invitation,
   jwks,

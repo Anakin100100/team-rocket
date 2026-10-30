@@ -1,6 +1,6 @@
 import { ORPCError, os } from "@orpc/server";
+import { isAppAdmin } from "@rocket/auth/admin";
 
-import { isAppAdmin } from "./admin";
 import type { Context } from "./context";
 
 export const o = os.$context<Context>();

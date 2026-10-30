@@ -1,3 +1,5 @@
+"use client"
+
 import { Item, ItemContent, ItemMedia } from "@rocket/ui/components/item"
 import { Skeleton } from "@rocket/ui/components/skeleton"
 

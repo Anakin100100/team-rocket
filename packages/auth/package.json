@@ -10,6 +10,7 @@
     "check-types": "tsc -b"
   },
   "dependencies": {
+    "@better-auth/api-key": "1.7.12",
     "@better-auth/cimd": "1.7.12",
     "@better-auth/core": "1.7.12",
     "@better-auth/drizzle-adapter": "1.7.12",
